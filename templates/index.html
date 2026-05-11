@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SuperRank — Rei do Play</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="manifest" href="/static/manifest.json" />
+  <meta name="theme-color" content="#1A3C4A" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="SuperRank" />
+</head>
+<body>
+  <div id="app" role="application" aria-label="SuperRank Rei do Play">
+    <!-- Conteúdo injetado pelo router em app.js -->
+  </div>
+  <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Templates de tela (hidden, clonados pelo JS) -->
+
+  <template id="tpl-login">
+    <div class="screen screen-login">
+      <div class="login-card">
+        <div class="login-logo">
+          <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
+          <span class="logo-sub">Rei do Play · Clube do Play</span>
+        </div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="atleta">Atleta</button>
+          <button class="tab-btn" data-tab="admin">Admin</button>
+        </div>
+
+        <!-- Login Atleta -->
+        <form id="form-login-atleta" class="tab-content active" data-tab="atleta">
+          <label class="field-label">Nome</label>
+          <input type="text" name="nome" class="field-input" placeholder="Seu nome completo" required />
+          <label class="field-label">PIN</label>
+          <input type="password" name="pin" class="field-input" placeholder="PIN de 4 dígitos" maxlength="4" required />
+          <button type="submit" class="btn btn-primary btn-full">Entrar</button>
+          <a href="#cadastro" class="link-secondary">Ainda não sou atleta — Cadastrar</a>
+        </form>
+
+        <!-- Login Admin -->
+        <form id="form-login-admin" class="tab-content" data-tab="admin">
+          <label class="field-label">Senha de Administrador</label>
+          <input type="password" name="password" class="field-input" placeholder="Senha admin" required />
+          <p id="login-admin-error" class="field-error hidden"></p>
+          <button type="submit" class="btn btn-primary btn-full">Entrar como Admin</button>
+        </form>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-publico">
+    <div class="screen">
+      <header class="top-bar">
+        <span class="top-bar-title">SuperRank · Rei do Play</span>
+        <nav class="top-bar-nav">
+          <a href="#publico/ranking" class="nav-link">Ranking</a>
+          <a href="#publico/grupos" class="nav-link">Grupos</a>
+          <a href="#publico/resultados" class="nav-link">Resultados</a>
+          <a href="#publico/titulos" class="nav-link">Títulos</a>
+          <a href="#publico/busca" class="nav-link">Busca</a>
+          <a href="#login" class="nav-link nav-link-cta">Entrar</a>
+        </nav>
+      </header>
+      <main class="main-content" id="publico-content">
+        <section class="hero">
+          <h1 class="hero-title">Rei do Play</h1>
+          <p class="hero-sub">Ranking contínuo de Beach Tennis · Clube do Play · Feira de Santana, BA</p>
+        </section>
+        <section class="categories-grid" id="categories-overview"></section>
+      </main>
+    </div>
+  </template>
+
+  <template id="tpl-admin">
+    <div class="screen screen-admin">
+      <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+      <aside class="sidebar" id="admin-sidebar" role="navigation" aria-label="Menu do administrador">
+        <div class="sidebar-logo">
+          <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
+          <span class="sidebar-badge">Admin</span>
+        </div>
+        <nav class="sidebar-nav">
+          <a href="#admin/dashboard" class="sidebar-link">Dashboard</a>
+          <a href="#admin/atletas" class="sidebar-link">Atletas</a>
+          <a href="#admin/categorias" class="sidebar-link">Categorias</a>
+          <a href="#admin/temporada/nova" class="sidebar-link">Nova Temporada</a>
+          <a href="#admin/rodada" class="sidebar-link">Painel de Rodada</a>
+          <a href="#admin/mediacao" class="sidebar-link">Mediação de Slot</a>
+          <a href="#admin/resultados" class="sidebar-link">Resultados</a>
+          <a href="#admin/fechamento" class="sidebar-link">Fechamento</a>
+          <a href="#admin/anual" class="sidebar-link">Anual</a>
+          <a href="#admin/relatorio" class="sidebar-link">Relatório</a>
+          <a href="#admin/contestacoes" class="sidebar-link" style="display:flex;align-items:center;">Contestações <span class="sidebar-notif-badge" id="contested-badge"></span></a>
+        </nav>
+        <button id="btn-logout" class="btn btn-ghost btn-full sidebar-logout">Sair</button>
+      </aside>
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+        <div class="admin-topbar" id="admin-topbar">
+          <button class="sidebar-toggle" id="btn-sidebar-toggle" aria-label="Abrir menu" aria-expanded="false" aria-controls="admin-sidebar">&#9776;</button>
+          <span class="logo-super" style="font-size:14px;">Super</span><span class="logo-rank" style="font-size:14px;">Rank</span>
+        </div>
+        <main class="admin-main" id="admin-content" role="main">
+          <p class="placeholder-text">Selecione uma opção no menu.</p>
+        </main>
+      </div>
+    </div>
+  </template>
+
+  <template id="tpl-mesa">
+    <div class="screen screen-mesa">
+      <header class="top-bar">
+        <span class="top-bar-title">SuperRank</span>
+        <span id="mesa-atleta-nome" class="top-bar-user"></span>
+        <button id="btn-mesa-logout" class="btn btn-ghost btn-sm">Sair</button>
+      </header>
+      <nav class="bottom-nav">
+        <a href="#mesa/home" class="bottom-nav-item">Home</a>
+        <a href="#mesa/slots" class="bottom-nav-item">Slots</a>
+        <a href="#mesa/grupo" class="bottom-nav-item">Grupo</a>
+        <a href="#mesa/resultado" class="bottom-nav-item">Resultado</a>
+        <a href="#mesa/historico" class="bottom-nav-item">Histórico</a>
+        <a href="#mesa/perfil" class="bottom-nav-item">Perfil</a>
+      </nav>
+      <main class="mesa-main" id="mesa-content">
+        <p class="placeholder-text">Carregando...</p>
+      </main>
+    </div>
+  </template>
+
+  <!-- Cadastro público de novo atleta -->
+  <template id="tpl-cadastro">
+    <div class="screen screen-login">
+      <div class="login-card" style="max-width:420px;">
+        <div class="login-logo">
+          <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
+          <span class="logo-sub">Cadastro de Atleta</span>
+        </div>
+        <form id="form-cadastro">
+          <label class="field-label">Nome completo</label>
+          <input type="text" name="nome" class="field-input" placeholder="Como você é conhecido no clube" required />
+
+          <label class="field-label">PIN (4 dígitos)</label>
+          <input type="password" name="pin" class="field-input" placeholder="Escolha um PIN de 4 dígitos" maxlength="4" inputmode="numeric" required />
+
+          <label class="field-label">Confirmar PIN</label>
+          <input type="password" name="pin_confirm" class="field-input" placeholder="Repita o PIN" maxlength="4" inputmode="numeric" required />
+
+          <label class="field-label">Categoria desejada</label>
+          <select name="desired_category" class="field-input">
+            <option value="">Sem preferência (entro em Cat D)</option>
+            <option value="D">Cat D — Iniciante</option>
+            <option value="C">Cat C — Intermediário</option>
+            <option value="B">Cat B — Avançado</option>
+          </select>
+          <p class="field-hint">Cat A é acessível apenas por promoção. O admin confirmará sua categoria.</p>
+
+          <p id="cadastro-error" class="field-error hidden"></p>
+          <p id="cadastro-success" class="field-success hidden"></p>
+
+          <button type="submit" class="btn btn-primary btn-full">Solicitar Cadastro</button>
+          <a href="#login" class="link-secondary">Já tenho cadastro — Entrar</a>
+        </form>
+      </div>
+    </div>
+  </template>
+
+  <!-- Modal genérico (reutilizado por todas as telas) -->
+  <template id="tpl-modal">
+    <div class="modal-overlay" id="modal-overlay">
+      <div class="modal" id="modal-box" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <span id="modal-title" class="modal-title"></span>
+          <button id="modal-close" class="modal-close" aria-label="Fechar">&times;</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+        <div class="modal-footer" id="modal-footer"></div>
+      </div>
+    </div>
+  </template>
+
+  <script src="/static/js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sem conexão — SuperRank</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #F4F6F8;
+      color: #1A2430;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      padding: 40px 32px;
+      text-align: center;
+      max-width: 360px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08);
+    }
+    .logo { font-size: 28px; font-weight: 800; margin-bottom: 24px; }
+    .logo span:first-child { color: #1A3C4A; }
+    .logo span:last-child  { color: #E8622A; }
+    .icon  { font-size: 52px; margin-bottom: 16px; }
+    h1     { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    p      { font-size: 14px; color: #6B7785; margin-bottom: 24px; line-height: 1.5; }
+    button {
+      background: #1A3C4A;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #15303C; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo"><span>Super</span><span>Rank</span></div>
+    <div class="icon">📡</div>
+    <h1>Sem conexão</h1>
+    <p>Verifique sua conexão com a internet e tente novamente.</p>
+    <button onclick="location.reload()">Tentar novamente</button>
+  </div>
+</body>
+</html>
