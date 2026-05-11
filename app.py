@@ -13,6 +13,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret")
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 CATEGORIES = ["A", "B", "C", "D"]
 
 
@@ -22,6 +23,8 @@ CATEGORIES = ["A", "B", "C", "D"]
 
 def read_json(filename):
     path = os.path.join(DATA_DIR, filename)
+    if not os.path.exists(path):
+        return {"version": 1, "data": []}
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
