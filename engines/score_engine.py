@@ -1,5 +1,6 @@
 # Art. 8: Vitória=3pts, Derrota=1pt, WO=0pts.
-# Art. 9: Set até 6 games; 5×5 → super tie-break 10pts diff≥2; NO-AD.
+# Art. 9: Set até 6 games (vence quem chegar a 6 com adversário ≤ 4). Se chegar a 5-5 o set
+#         continua até 7-5 (vantagem) ou 7-6 (Tie Break). NO-AD.
 # Art. 10: WO total (0pts) e WO parcial (sets concluídos mantêm resultado).
 
 from __future__ import annotations
@@ -9,42 +10,36 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 def validate_set_score(games_a: int, games_b: int, is_super_tiebreak: bool = False) -> bool:
-    """Valida se um placar de set é legítimo conforme Art. 9."""
+    """
+    Valida placar de set conforme Art. 9.
+    Placares válidos:
+      6-x  com x ∈ {0,1,2,3,4}  → vitória normal
+      7-5                         → set prolongado (chegou a 6-5, jogou mais um game)
+      7-6  (is_super_tiebreak=T)  → Tie Break
+    """
     if not isinstance(games_a, int) or not isinstance(games_b, int):
         return False
     if games_a < 0 or games_b < 0:
         return False
 
-    if is_super_tiebreak:
-        # STB: primeiro a 10 com diff ≥ 2; mín de games = 10 (0-10 válido? não — vencedor ≥10)
-        winner = max(games_a, games_b)
-        loser  = min(games_a, games_b)
-        if winner < 10:
-            return False
-        if winner - loser < 2:
-            return False
-        return True
-
-    # Set normal: max 6 games por lado
     hi = max(games_a, games_b)
     lo = min(games_a, games_b)
 
-    if hi > 6:
-        return False
-    if hi < 6:
-        return False  # precisa chegar a 6
+    if hi == 6 and lo <= 4:
+        return True   # 6-0 … 6-4
 
-    # 6-x  valido apenas se x <= 4 (vitória clara) ou x == 5 (era 5x5, jogou STB → nunca cai aqui)
-    # No contexto do regulamento, se chegou 5x5 deve jogar STB e registrar com is_super_tiebreak=True.
-    # Portanto: 6-5 NÃO é placar válido num set normal (nunca chegará assim com regras corretas).
-    if lo > 4:
-        return False  # 6-5 inválido (deveria ter marcado STB), 6-6 impossível
-    return True
+    if hi == 7 and lo == 5:
+        return True   # 7-5
+
+    if hi == 7 and lo == 6:
+        return True   # 7-6 (Tie Break)
+
+    return False
 
 
-def is_stb_needed(games_a: int, games_b: int) -> bool:
-    """Retorna True se o placar parcial 5×5 indica que STB é necessário."""
-    return games_a == 5 and games_b == 5
+def is_tiebreak(games_a: int, games_b: int) -> bool:
+    """Retorna True se o placar indica Tie Break (7-6)."""
+    return max(games_a, games_b) == 7 and min(games_a, games_b) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +198,6 @@ def validate_group_scores(sets_scores: list[dict]) -> list[str]:
             continue
 
         if not validate_set_score(sa, sb, is_stb):
-            errors.append(f"Set {set_num}: placar {sa}x{sb} inválido{'(STB)' if is_stb else ''}")
+            errors.append(f"Set {set_num}: placar {sa}×{sb} inválido. Válidos: 6-x (x≤4), 7-5, 7-6")
 
     return errors

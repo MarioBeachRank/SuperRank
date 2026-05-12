@@ -2131,3 +2131,100 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   color: var(--color-text-muted);
   font-size: 13px;
 }
+
+/* =====================================================================
+   Score picker (athlete result + admin score form)
+   ===================================================================== */
+
+.score-set-block {
+  background: var(--color-bg);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.score-set-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--color-primary);
+  margin-bottom: 10px;
+}
+
+.score-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.score-picker-team {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  min-width: 90px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-num-btns {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.score-num-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  touch-action: manipulation;
+}
+
+.score-num-btn:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-primary);
+}
+
+.score-num-btn.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.score-set-status {
+  min-height: 22px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.set-tb-badge {
+  display: inline-block;
+  background: rgba(81, 207, 102, 0.15);
+  border: 1px solid rgba(81, 207, 102, 0.40);
+  color: #69DB7C;
+  border-radius: 10px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.set-score-error {
+  color: #D94040;
+  font-size: 12px;
+  font-weight: 500;
+}

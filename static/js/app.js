@@ -2658,6 +2658,109 @@ function renderMesaGrupo(content, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Score picker helpers (shared by athlete launch form + admin score form)
+// ---------------------------------------------------------------------------
+
+function validateSetPair(a, b) {
+  if (a === null || b === null) return null;
+  const hi = Math.max(a, b), lo = Math.min(a, b);
+  if (hi === 6 && lo <= 4) return { valid: true, tb: false };
+  if (hi === 7 && lo === 5) return { valid: true, tb: false };
+  if (hi === 7 && lo === 6) return { valid: true, tb: true };
+  if (hi === 7) return { valid: false, msg: `7×${lo}: adversário deve ter 5 (7-5) ou 6 (7-6 Tie Break).` };
+  if (hi === 6 && lo === 5) return { valid: false, msg: `6-5 inválido — registre 7-5 ou 7-6 (Tie Break).` };
+  if (hi === 6 && lo === 6) return { valid: false, msg: `6-6 inválido — registre 7-6 (Tie Break).` };
+  return { valid: false, msg: `Incompleto — nenhum time chegou a 6.` };
+}
+
+function buildScoreSetBlockHtml(prefix, setNum, teamAName, teamBName, teamAIds, teamBIds) {
+  const nums = [0,1,2,3,4,5,6,7];
+  const mkBtns = side => nums.map(n =>
+    `<button type="button" class="score-num-btn" data-val="${n}" data-side="${side}" data-set="${setNum}" data-prefix="${prefix}">${n}</button>`
+  ).join('');
+  return `
+    <div class="score-set-block" id="${prefix}set-block-${setNum}">
+      <p class="score-set-label">Set ${setNum}</p>
+      <div class="score-picker-row">
+        <span class="score-picker-team">${escapeHtml(teamAName)}</span>
+        <div class="score-num-btns" id="${prefix}btns-a${setNum}">${mkBtns('a')}</div>
+      </div>
+      <div class="score-picker-row" style="margin-top:6px;">
+        <span class="score-picker-team">${escapeHtml(teamBName)}</span>
+        <div class="score-num-btns" id="${prefix}btns-b${setNum}">${mkBtns('b')}</div>
+      </div>
+      <div class="score-set-status" id="${prefix}status${setNum}"></div>
+      <input type="hidden" id="${prefix}sa${setNum}" value="">
+      <input type="hidden" id="${prefix}sb${setNum}" value="">
+      <input type="hidden" id="${prefix}stb${setNum}" value="false">
+      <input type="hidden" id="${prefix}ta${setNum}" value='${JSON.stringify(teamAIds||[])}'>
+      <input type="hidden" id="${prefix}tb${setNum}" value='${JSON.stringify(teamBIds||[])}'>
+    </div>`;
+}
+
+function attachScorePickerListeners(container, prefix, setNums) {
+  setNums.forEach(setNum => {
+    const block    = container.querySelector(`#${prefix}set-block-${setNum}`);
+    if (!block) return;
+    const hiddenA  = container.querySelector(`#${prefix}sa${setNum}`);
+    const hiddenB  = container.querySelector(`#${prefix}sb${setNum}`);
+    const hiddenStb = container.querySelector(`#${prefix}stb${setNum}`);
+    const statusEl = container.querySelector(`#${prefix}status${setNum}`);
+
+    function getVal(side) {
+      const v = (side === 'a' ? hiddenA : hiddenB).value;
+      return v === '' ? null : parseInt(v, 10);
+    }
+    function updateStatus() {
+      const res = validateSetPair(getVal('a'), getVal('b'));
+      if (!res) { statusEl.innerHTML = ''; hiddenStb.value = 'false'; return; }
+      if (res.valid) {
+        statusEl.innerHTML = res.tb ? '<span class="set-tb-badge">Tie Break</span>' : '';
+        hiddenStb.value = res.tb ? 'true' : 'false';
+      } else {
+        statusEl.innerHTML = `<span class="set-score-error">${res.msg}</span>`;
+        hiddenStb.value = 'false';
+      }
+    }
+    block.querySelectorAll('.score-num-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const side   = btn.dataset.side;
+        const val    = btn.dataset.val;
+        const hidden = side === 'a' ? hiddenA : hiddenB;
+        const row    = block.querySelector(`#${prefix}btns-${side}${setNum}`);
+        if (hidden.value === val) {
+          hidden.value = '';
+          btn.classList.remove('selected');
+        } else {
+          hidden.value = val;
+          row.querySelectorAll('.score-num-btn').forEach(b => b.classList.remove('selected'));
+          btn.classList.add('selected');
+        }
+        updateStatus();
+      });
+    });
+  });
+}
+
+function readScoreSets(container, prefix, count) {
+  return Array.from({ length: count }, (_, i) => {
+    const n   = i + 1;
+    const sa  = container.querySelector(`#${prefix}sa${n}`)?.value ?? '';
+    const sb  = container.querySelector(`#${prefix}sb${n}`)?.value ?? '';
+    const stb = container.querySelector(`#${prefix}stb${n}`)?.value === 'true';
+    const ta  = JSON.parse(container.querySelector(`#${prefix}ta${n}`)?.value || '[]');
+    const tb  = JSON.parse(container.querySelector(`#${prefix}tb${n}`)?.value || '[]');
+    return {
+      set: n,
+      team_a: ta, team_b: tb,
+      score_a: sa === '' ? NaN : parseInt(sa, 10),
+      score_b: sb === '' ? NaN : parseInt(sb, 10),
+      is_super_tiebreak: stb,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Mesa: Resultado (confirmar/contestar)
 // ---------------------------------------------------------------------------
 
@@ -2670,41 +2773,23 @@ function renderMesaResultado(content, ctx) {
   const { athlete, group, round } = ctx;
   const STATUS_LABEL = { pending_confirmation: 'Aguardando confirmação', confirmed: 'Confirmado', contested: 'Contestado' };
 
-  // Builds set score input form (for launch or contest)
+  const setCount = (group.sets_named || []).length;
+  const setNums  = (group.sets_named || []).map(s => s.set);
+
   function buildSetForm(prefix) {
     return (group.sets_named || []).map((s, i) => {
       const raw = (group.sets || [])[i] || {};
-      return `
-        <div class="result-set-form">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <span class="set-label">Set ${s.set}</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <span style="font-size:12px;flex:1;min-width:80px;">${s.team_a.map(escapeHtml).join(' + ')}</span>
-            <input type="number" name="${prefix}sa${s.set}" min="0" max="20" placeholder="—"
-              class="field-input result-score-input" style="width:54px;text-align:center;padding:6px;" />
-            <span style="font-weight:700;font-size:16px;">×</span>
-            <input type="number" name="${prefix}sb${s.set}" min="0" max="20" placeholder="—"
-              class="field-input result-score-input" style="width:54px;text-align:center;padding:6px;" />
-            <span style="font-size:12px;flex:1;min-width:80px;text-align:right;">${s.team_b.map(escapeHtml).join(' + ')}</span>
-          </div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px;cursor:pointer;">
-            <input type="checkbox" name="${prefix}stb${s.set}" /> Super tie-break (chegou 5×5)
-          </label>
-          <input type="hidden" name="${prefix}ta${s.set}" value='${JSON.stringify(raw.team_a||[])}' />
-          <input type="hidden" name="${prefix}tb${s.set}" value='${JSON.stringify(raw.team_b||[])}' />
-        </div>`;
+      return buildScoreSetBlockHtml(
+        prefix, s.set,
+        s.team_a.map(escapeHtml).join(' + '),
+        s.team_b.map(escapeHtml).join(' + '),
+        raw.team_a || [], raw.team_b || []
+      );
     }).join('');
   }
 
   function collectSets(container, prefix) {
-    return (group.sets_named || []).map((s, i) => {
-      const raw = (group.sets || [])[i] || {};
-      const sa = parseInt(container.querySelector(`[name="${prefix}sa${s.set}"]`)?.value);
-      const sb = parseInt(container.querySelector(`[name="${prefix}sb${s.set}"]`)?.value);
-      const stb = container.querySelector(`[name="${prefix}stb${s.set}"]`)?.checked || false;
-      return { set: s.set, team_a: raw.team_a||[], team_b: raw.team_b||[], score_a: sa, score_b: sb, is_super_tiebreak: stb };
-    });
+    return readScoreSets(container, prefix, setCount);
   }
 
   function scoresTableHtml(result) {
@@ -2762,11 +2847,20 @@ function renderMesaResultado(content, ctx) {
         </div>
       </div>`;
 
+      attachScorePickerListeners(content, 'l_', setNums);
+
       content.querySelector('#btn-lancar').addEventListener('click', async () => {
         const btn = content.querySelector('#btn-lancar');
         const errEl = content.querySelector('#launch-error');
+        errEl.classList.add('hidden');
         const sets = collectSets(content, 'l_');
-        btn.disabled = true; btn.textContent = 'Lançando…'; errEl.classList.add('hidden');
+        // Validate each set before sending
+        for (const s of sets) {
+          const res = validateSetPair(isNaN(s.score_a) ? null : s.score_a, isNaN(s.score_b) ? null : s.score_b);
+          if (!res) { errEl.textContent = `Set ${s.set}: selecione o placar dos dois times.`; errEl.classList.remove('hidden'); return; }
+          if (!res.valid) { errEl.textContent = `Set ${s.set}: ${res.msg}`; errEl.classList.remove('hidden'); return; }
+        }
+        btn.disabled = true; btn.textContent = 'Lançando…';
         try {
           await api(`/api/rounds/${round.id}/results`, {
             method: 'POST', body: { cat: group.category, group_idx: group.group_index, sets },
@@ -2840,6 +2934,10 @@ function renderMesaResultado(content, ctx) {
       ${myStatusHtml}
     </div>`;
 
+    if (canAct && showContestForm) {
+      attachScorePickerListeners(content, 'c_', setNums);
+    }
+
     // Confirmar
     content.querySelector('#btn-confirmar')?.addEventListener('click', async () => {
       const btn = content.querySelector('#btn-confirmar');
@@ -2865,6 +2963,15 @@ function renderMesaResultado(content, ctx) {
       const reason = content.querySelector('#contest-reason')?.value?.trim();
       if (!reason) { errEl.textContent = 'Informe o motivo.'; errEl.classList.remove('hidden'); return; }
       const sets = collectSets(content, 'c_');
+      // Validate sets if any were filled in
+      const anyFilled = sets.some(s => !isNaN(s.score_a) || !isNaN(s.score_b));
+      if (anyFilled) {
+        for (const s of sets) {
+          const res = validateSetPair(isNaN(s.score_a) ? null : s.score_a, isNaN(s.score_b) ? null : s.score_b);
+          if (!res) { errEl.textContent = `Set ${s.set}: selecione o placar dos dois times.`; errEl.classList.remove('hidden'); return; }
+          if (!res.valid) { errEl.textContent = `Set ${s.set}: ${res.msg}`; errEl.classList.remove('hidden'); return; }
+        }
+      }
       btn.disabled = true; btn.textContent = 'Enviando…'; errEl.classList.add('hidden');
       try {
         await api(`/api/results/${result.id}/confirm`, { method: 'POST', body: { action: 'contested', reason, sets } });
@@ -3047,24 +3154,13 @@ function attachResultadosListeners(body, athletesById, refresh) {
 }
 
 function openScoreForm(roundId, cat, gi, group, sets, athletesById, refresh) {
-  const setsHtml = [1, 2, 3].map(setNum => {
-    const setDef = sets[setNum - 1] || {};
-    const teamA = (setDef.team_a || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
-    const teamB = (setDef.team_b || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
-    return `
-      <div class="score-set-block">
-        <p class="score-set-label">Set ${setNum}</p>
-        <p style="font-size:11px;color:var(--color-text-muted);margin-bottom:6px;">${escapeHtml(teamA)} vs ${escapeHtml(teamB)}</p>
-        <div class="score-set-inputs">
-          <input type="number" id="sa${setNum}" min="0" max="20" value="" placeholder="—" />
-          <span style="font-weight:700;">×</span>
-          <input type="number" id="sb${setNum}" min="0" max="20" value="" placeholder="—" />
-        </div>
-        <label class="score-stb-checkbox">
-          <input type="checkbox" id="stb${setNum}" />
-          Super Tie-Break
-        </label>
-      </div>`;
+  const prefix   = `adm${gi}_`;
+  const setNums  = sets.map((_, i) => i + 1);
+  const setsHtml = sets.map((setDef, idx) => {
+    const n      = idx + 1;
+    const teamA  = (setDef.team_a || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
+    const teamB  = (setDef.team_b || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
+    return buildScoreSetBlockHtml(prefix, n, teamA, teamB, setDef.team_a || [], setDef.team_b || []);
   }).join('');
 
   openModal(
@@ -3077,25 +3173,22 @@ function openScoreForm(roundId, cat, gi, group, sets, athletesById, refresh) {
      <button id="btn-score-cancelar" class="btn btn-ghost">Cancelar</button>`
   );
 
+  const modalBody = document.getElementById('modal-body');
+  attachScorePickerListeners(modalBody, prefix, setNums);
+
   document.getElementById('btn-score-cancelar').addEventListener('click', closeModal);
   document.getElementById('btn-score-salvar').addEventListener('click', async () => {
     const errEl = document.getElementById('score-error');
     errEl.classList.add('hidden');
 
-    const setsPayload = sets.map((setDef, idx) => {
-      const n = idx + 1;
-      const sa = parseInt(document.getElementById(`sa${n}`)?.value);
-      const sb = parseInt(document.getElementById(`sb${n}`)?.value);
-      const stb = document.getElementById(`stb${n}`)?.checked || false;
-      return {
-        set: n,
-        team_a: setDef.team_a || [],
-        team_b: setDef.team_b || [],
-        score_a: isNaN(sa) ? null : sa,
-        score_b: isNaN(sb) ? null : sb,
-        is_super_tiebreak: stb,
-      };
-    });
+    const setsPayload = readScoreSets(modalBody, prefix, sets.length);
+
+    // Validate all sets before sending
+    for (const s of setsPayload) {
+      const res = validateSetPair(isNaN(s.score_a) ? null : s.score_a, isNaN(s.score_b) ? null : s.score_b);
+      if (!res) { errEl.textContent = `Set ${s.set}: selecione o placar dos dois times.`; errEl.classList.remove('hidden'); return; }
+      if (!res.valid) { errEl.textContent = `Set ${s.set}: ${res.msg}`; errEl.classList.remove('hidden'); return; }
+    }
 
     try {
       await api(`/api/rounds/${roundId}/results`, {
