@@ -928,6 +928,34 @@ select.field-input {
 
 .categories-grid { display: grid; gap: var(--space-md); }
 
+/* Public screen — mobile-first (Sprint 18) */
+.screen-publico { display: flex; flex-direction: column; height: 100dvh; background: var(--color-bg); }
+
+.publico-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md);
+  background: var(--color-surface);
+  border-bottom: var(--border);
+  height: 52px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.publico-header-logo { flex: 1; display: flex; align-items: center; }
+
+.publico-main {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+}
+
+.nav-link.active { color: var(--color-primary); }
+
 /* =====================================================================
    Painel de Rodada — Round cards
    ===================================================================== */

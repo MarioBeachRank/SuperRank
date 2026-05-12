@@ -382,10 +382,11 @@ async function renderPublico(sub) {
   const frag = cloneTemplate('tpl-publico');
   app.appendChild(frag);
 
-  // Highlight active nav link
-  const activeHref = sub ? `#publico/${sub}` : '#publico';
+  // Highlight active bottom-nav item
+  const activeHref = sub ? `#publico/${sub}` : '#publico/ranking';
   app.querySelectorAll('.nav-link').forEach(l => {
-    if (l.getAttribute('href') === activeHref || (!sub && l.getAttribute('href') === '#publico/ranking'))
+    const href = l.getAttribute('href');
+    if (href === activeHref || (!sub && href === '#publico/ranking'))
       l.classList.add('active');
   });
 
@@ -395,9 +396,9 @@ async function renderPublico(sub) {
   const activeSeason = seasons.find(s => s.status === 'active') || seasons[0];
   const container = app.querySelector('#categories-overview');
 
-  if (!activeSeason && !sub?.startsWith('atleta/') && sub !== 'titulos' && sub !== 'resultados' && sub !== 'busca') {
+  if (!activeSeason && !sub?.startsWith('atleta/') && sub !== 'titulos' && sub !== 'busca') {
     container.innerHTML = `
-      <div class="empty-state">
+      <div class="empty-state" style="padding:40px 20px;">
         <div class="empty-state-icon">🎾</div>
         <p class="empty-state-title">Nenhuma temporada ativa</p>
         <p>Aguarde o administrador criar e ativar uma temporada.</p>
@@ -418,41 +419,20 @@ async function renderPublico(sub) {
   } else if (sub.startsWith('atleta/')) {
     const athleteId = sub.slice('atleta/'.length);
     await renderPublicoAtleta(container, athleteId);
-  } else {
-    // Overview padrão
-    container.innerHTML = `
-      <p style="text-align:center;margin-bottom:16px;color:var(--color-text-muted);font-size:13px;">
-        Temporada: <strong>${escapeHtml(activeSeason.name)}</strong>
-      </p>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;">
-        ${['A','B','C','D'].map(cat => {
-          const setup = activeSeason.category_setup[cat];
-          const n = setup ? setup.titular_ids.length : 0;
-          return `
-            <div class="card" style="min-width:160px;text-align:center;">
-              ${catLabel(cat)}
-              <p style="margin-top:8px;font-size:22px;font-weight:700;color:var(--color-primary);">${n}</p>
-              <p style="color:var(--color-text-muted);font-size:12px;">titular${n !== 1 ? 'es' : ''}</p>
-            </div>`;
-        }).join('')}
-      </div>`;
   }
 }
 
 async function renderPublicoRanking(container, season) {
-  container.innerHTML = `<p class="placeholder-text">Carregando ranking…</p>`;
+  container.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando ranking…</p>`;
 
   let rankingData = {};
   try { rankingData = await api(`/api/seasons/${season.id}/ranking`); } catch (_) {}
 
-  const cats = ['A','B','C','D'].filter(c => {
-    const r = rankingData[c];
-    return r && r.length > 0;
-  });
+  const cats = ['A','B','C','D'].filter(c => (rankingData[c] || []).length > 0);
 
   if (!cats.length) {
     container.innerHTML = `
-      <div class="empty-state">
+      <div class="empty-state" style="padding:40px 20px;">
         <p class="empty-state-title">Nenhum resultado registrado</p>
         <p>O ranking será atualizado após o lançamento dos primeiros resultados.</p>
       </div>`;
@@ -489,17 +469,15 @@ async function renderPublicoRanking(container, season) {
   };
 
   const rebuild = () => {
-    const tabsEl = container.querySelector('#ranking-tabs');
-    tabsEl.querySelectorAll('.ranking-cat-tab').forEach(t => {
-      t.classList.toggle('active', t.dataset.cat === activeCat);
-    });
+    container.querySelectorAll('.ranking-cat-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.cat === activeCat));
     container.querySelector('#ranking-table-area').innerHTML = renderTable(activeCat);
   };
 
   container.innerHTML = `
-    <div style="padding:0 var(--space-md);">
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px;">
-        Temporada: <strong>${escapeHtml(season.name)}</strong>
+    <div style="padding:var(--space-md) var(--space-md) 0;">
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">
+        ${escapeHtml(season.name)}
       </p>
       <div class="ranking-cat-tabs" id="ranking-tabs">
         ${cats.map(c => `
@@ -507,25 +485,26 @@ async function renderPublicoRanking(container, season) {
             Cat ${c}
           </button>`).join('')}
       </div>
+    </div>
+    <div style="padding:0 var(--space-md);">
       <div class="card" style="padding:0;overflow:hidden;" id="ranking-table-area">
         ${renderTable(activeCat)}
       </div>
     </div>`;
 
-  container.querySelectorAll('.ranking-cat-tab').forEach(btn => {
-    btn.addEventListener('click', () => { activeCat = btn.dataset.cat; rebuild(); });
-  });
+  container.querySelectorAll('.ranking-cat-tab').forEach(btn =>
+    btn.addEventListener('click', () => { activeCat = btn.dataset.cat; rebuild(); }));
 }
 
 async function renderPublicoGrupos(container, season) {
-  container.innerHTML = `<p class="placeholder-text">Carregando grupos…</p>`;
+  container.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando grupos…</p>`;
 
   let rounds = [];
   try { rounds = await api(`/api/seasons/${season.id}/rounds`); } catch (_) {}
 
   const latest = rounds.sort((a,b) => b.round_number - a.round_number)[0];
   if (!latest) {
-    container.innerHTML = `<div class="empty-state"><p class="empty-state-title">Nenhuma rodada criada</p></div>`;
+    container.innerHTML = `<div class="empty-state" style="padding:40px 20px;"><p class="empty-state-title">Nenhuma rodada criada</p></div>`;
     return;
   }
 
@@ -533,22 +512,33 @@ async function renderPublicoGrupos(container, season) {
   try { athletes = await api('/api/athletes'); } catch (_) {}
   const byId = Object.fromEntries(athletes.map(a => [a.id, a]));
 
-  let html = `<div style="padding:0 var(--space-md);">
-    <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px;">Rodada ${latest.round_number} · ${latest.target_date || ''}</p>`;
+  const catColors = { A: 'var(--color-cat-a)', B: 'var(--color-cat-b)', C: 'var(--color-cat-c)', D: 'var(--color-cat-d)' };
 
-  for (const [cat, groups] of Object.entries(latest.groups || {})) {
-    html += `<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin:16px 0 8px;">${catLabel(cat)}</p>`;
+  let html = `<div style="padding:var(--space-md);">
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:var(--space-md);">
+      Rodada ${latest.round_number}${latest.target_date ? ' · ' + latest.target_date : ''}
+    </p>`;
+
+  for (const cat of ['A','B','C','D']) {
+    const groups = latest.groups?.[cat];
+    if (!groups || !groups.length) continue;
+    html += `
+      <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;">
+        <span style="width:3px;height:16px;background:${catColors[cat] || 'var(--color-primary)'};border-radius:2px;flex-shrink:0;"></span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${catColors[cat] || 'var(--color-text-muted)'};">${catLabel(cat)}</span>
+      </div>`;
     groups.forEach((group, gi) => {
       const slot = latest.official_slots?.[cat]?.[gi];
-      html += `<div class="card" style="margin-bottom:10px;padding:var(--space-sm) var(--space-md);">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <strong style="font-size:13px;">Grupo ${gi+1}</strong>
-          ${slot?.slot ? `<span style="font-size:12px;color:var(--color-text-muted);">⏰ ${slot.slot}</span>` : ''}
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;">
-          ${group.map(aid => `<span class="athlete-chip">${escapeHtml(byId[aid]?.nome || aid)}</span>`).join('')}
-        </div>
-      </div>`;
+      html += `
+        <div class="card" style="margin-bottom:10px;padding:var(--space-sm) var(--space-md);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <strong style="font-size:13px;color:var(--color-text);">Grupo ${gi+1}</strong>
+            ${slot?.slot ? `<span style="font-size:12px;color:var(--color-text-muted);">⏰ ${slot.slot}</span>` : '<span style="font-size:11px;color:var(--color-text-muted);">Horário pendente</span>'}
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            ${group.map(aid => `<a href="#publico/atleta/${aid}" class="athlete-chip" style="text-decoration:none;color:inherit;">${escapeHtml(byId[aid]?.nome || aid)}</a>`).join('')}
+          </div>
+        </div>`;
     });
   }
 

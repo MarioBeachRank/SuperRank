@@ -98,28 +98,54 @@
   </template>
 
   <!-- =====================================================================
-       Tela Pública
+       Tela Pública — mobile-first (Sprint 18)
        ===================================================================== -->
   <template id="tpl-publico">
-    <div class="screen">
-      <header class="top-bar">
-        <span class="top-bar-title">SuperRank · Rei do Play</span>
-        <nav class="top-bar-nav">
-          <a href="#publico/ranking"    class="nav-link">Ranking</a>
-          <a href="#publico/grupos"     class="nav-link">Grupos</a>
-          <a href="#publico/resultados" class="nav-link">Resultados</a>
-          <a href="#publico/titulos"    class="nav-link">Títulos</a>
-          <a href="#publico/busca"      class="nav-link">Busca</a>
-          <a href="#login"              class="nav-link nav-link-cta">Entrar</a>
-        </nav>
+    <div class="screen screen-publico">
+
+      <!-- Compact sticky header -->
+      <header class="publico-header">
+        <span class="publico-header-logo">
+          <span class="logo-super" style="font-size:15px;">Super</span><span class="logo-rank" style="font-size:15px;">Rank</span>
+        </span>
+        <a href="#publico/titulos" class="nav-link" style="font-size:12px;margin-right:var(--space-sm);">Títulos</a>
+        <a href="#login" class="btn btn-primary btn-sm">Entrar</a>
       </header>
-      <main class="main-content" id="publico-content">
-        <section class="hero">
-          <h1 class="hero-title">Rei do Play 🎾</h1>
-          <p class="hero-sub">Ranking contínuo de Beach Tennis · Clube do Play · Feira de Santana, BA</p>
-        </section>
-        <section class="categories-grid" id="categories-overview"></section>
+
+      <!-- Scrollable content area -->
+      <main class="publico-main" id="publico-content">
+        <section id="categories-overview"></section>
       </main>
+
+      <!-- Bottom navigation -->
+      <nav class="bottom-nav" id="publico-bottom-nav" aria-label="Navegação pública">
+        <a href="#publico/ranking" class="bottom-nav-item nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+          <span class="bottom-nav-label">Ranking</span>
+        </a>
+        <a href="#publico/grupos" class="bottom-nav-item nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+          </svg>
+          <span class="bottom-nav-label">Grupos</span>
+        </a>
+        <a href="#publico/resultados" class="bottom-nav-item nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span class="bottom-nav-label">Resultados</span>
+        </a>
+        <a href="#publico/busca" class="bottom-nav-item nav-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <span class="bottom-nav-label">Busca</span>
+        </a>
+      </nav>
+
     </div>
   </template>
 
