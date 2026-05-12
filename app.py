@@ -359,14 +359,19 @@ def seasons_create():
         return jsonify({"error": "Nome da temporada é obrigatório"}), 400
     if not year or not isinstance(year, int) or year < 2020:
         return jsonify({"error": "Ano inválido"}), 400
-    if not start_date or not end_date:
-        return jsonify({"error": "Datas de início e fim são obrigatórias"}), 400
-    if start_date >= end_date:
-        return jsonify({"error": "Data de fim deve ser posterior à de início"}), 400
+    if not start_date:
+        return jsonify({"error": "Data de início é obrigatória"}), 400
     if not (2 <= rounds_total <= 5):
         return jsonify({"error": "Número de rodadas deve ser entre 2 e 5"}), 400
     if not (1 <= round_duration_days <= 60):
         return jsonify({"error": "Duração de rodada deve ser entre 1 e 60 dias"}), 400
+    # Auto-calculate end_date if not provided or if calculated is later than provided
+    from datetime import timedelta as _td2
+    _auto_end = (datetime.strptime(start_date, "%Y-%m-%d") + _td2(days=rounds_total * round_duration_days - 1)).strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = _auto_end
+    if start_date >= end_date:
+        return jsonify({"error": "Data de fim deve ser posterior à de início"}), 400
     if location_mode not in ("single", "multiple"):
         return jsonify({"error": "Modo de local inválido"}), 400
 
@@ -419,6 +424,15 @@ def seasons_update(season_id):
         season["rounds_total"] = int(body["rounds_total"])
     if "round_duration_days" in body:
         season["round_duration_days"] = int(body["round_duration_days"])
+
+    # Recalculate end_date if structural fields changed and end_date not explicitly set in this request
+    if any(k in body for k in ("start_date", "rounds_total", "round_duration_days")) and "end_date" not in body:
+        from datetime import timedelta as _td3
+        _sd = season.get("start_date")
+        _rt = season.get("rounds_total", 4)
+        _rd = season.get("round_duration_days", 10)
+        if _sd:
+            season["end_date"] = (datetime.strptime(_sd, "%Y-%m-%d") + _td3(days=_rt * _rd - 1)).strftime("%Y-%m-%d")
 
     write_json("seasons.json", db)
     return jsonify(season)

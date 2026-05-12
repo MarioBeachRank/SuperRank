@@ -288,6 +288,7 @@ select.field-input {
 .field-error   { color: #FC5C7D; font-size: var(--font-size-sm); }
 .field-success { color: var(--color-cat-b); font-size: var(--font-size-sm); }
 .field-hint    { font-size: 11px; color: var(--color-text-muted); }
+.field-tag     { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: rgba(255,107,53,0.15); color: var(--color-primary); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
 
 .link-secondary { font-size: var(--font-size-sm); color: var(--color-text-muted); text-align: center; transition: color .15s; }
 .link-secondary:hover { color: var(--color-text); }

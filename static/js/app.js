@@ -1551,11 +1551,18 @@ function renderAdminTemporadaNova(content) {
         </div>
         <div class="form-group">
           <label class="field-label">Data de início</label>
-          <input type="date" name="start_date" class="field-input" value="${today}" required />
+          <input type="date" name="start_date" id="f-start-date" class="field-input" value="${today}" required />
         </div>
         <div class="form-group">
-          <label class="field-label">Data de fim</label>
-          <input type="date" name="end_date" class="field-input" required />
+          <label class="field-label" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>Data de fim <span id="end-date-tag" class="field-tag">calculada</span></span>
+            <label style="font-size:11px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:4px;">
+              <input type="checkbox" id="chk-extend" style="margin:0;" />
+              Ajustar manualmente
+            </label>
+          </label>
+          <input type="date" name="end_date" id="f-end-date" class="field-input" readonly
+            style="background:var(--color-surface-2);color:var(--color-text-muted);" required />
         </div>
         <div class="form-group full">
           <label class="field-label">Local de jogo</label>
@@ -1578,6 +1585,53 @@ function renderAdminTemporadaNova(content) {
         </div>
       </form>
     </div>`;
+
+  // Auto-calculate end_date from start_date + rounds * days_per_round - 1
+  function calcEndDate() {
+    const start   = content.querySelector('#f-start-date')?.value;
+    const rounds  = parseInt(content.querySelector('[name="rounds_total"]')?.value) || 0;
+    const days    = parseInt(content.querySelector('[name="round_duration_days"]')?.value) || 0;
+    if (!start || !rounds || !days) return '';
+    const d = new Date(start + 'T00:00:00');
+    d.setDate(d.getDate() + rounds * days - 1);
+    return d.toISOString().split('T')[0];
+  }
+
+  function refreshEndDate() {
+    const isManual = content.querySelector('#chk-extend')?.checked;
+    if (!isManual) {
+      const calc = calcEndDate();
+      const field = content.querySelector('#f-end-date');
+      if (field && calc) field.value = calc;
+    }
+  }
+
+  // Wire up auto-recalculation
+  ['#f-start-date', '[name="rounds_total"]', '[name="round_duration_days"]'].forEach(sel => {
+    content.querySelector(sel)?.addEventListener('input', refreshEndDate);
+    content.querySelector(sel)?.addEventListener('change', refreshEndDate);
+  });
+
+  // Toggle manual override
+  content.querySelector('#chk-extend')?.addEventListener('change', function() {
+    const field = content.querySelector('#f-end-date');
+    const tag   = content.querySelector('#end-date-tag');
+    if (this.checked) {
+      field.removeAttribute('readonly');
+      field.style.background = '';
+      field.style.color = '';
+      if (tag) tag.textContent = 'manual';
+    } else {
+      field.setAttribute('readonly', '');
+      field.style.background = 'var(--color-surface-2)';
+      field.style.color = 'var(--color-text-muted)';
+      if (tag) tag.textContent = 'calculada';
+      refreshEndDate();
+    }
+  });
+
+  // Set initial value
+  refreshEndDate();
 
   content.querySelector('#form-temporada').addEventListener('submit', async e => {
     e.preventDefault();
