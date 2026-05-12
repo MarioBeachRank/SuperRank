@@ -97,6 +97,21 @@ function parseTelefone(full) {
   return { countryCode: '55', localNumber: digits };
 }
 
+function fmtPhone(digits) {
+  if (!digits) return '';
+  const d = digits.replace(/\D/g, '').slice(0, 11);
+  if (d.length <= 2) return '(' + d;
+  if (d.length <= 6) return '(' + d.slice(0,2) + ') ' + d.slice(2);
+  if (d.length <= 10) return '(' + d.slice(0,2) + ') ' + d.slice(2,6) + '-' + d.slice(6);
+  return '(' + d.slice(0,2) + ') ' + d.slice(2,7) + '-' + d.slice(7,11);
+}
+
+function applyPhoneMask(el) {
+  el.addEventListener('input', () => {
+    el.value = fmtPhone(el.value);
+  });
+}
+
 function phoneInputHtml(full = '') {
   const { countryCode, localNumber } = parseTelefone(full);
   const options = PHONE_COUNTRIES.map(c =>
@@ -106,7 +121,8 @@ function phoneInputHtml(full = '') {
     <div class="phone-input-group">
       <select name="phone_country" class="phone-country-select">${options}</select>
       <input type="tel" name="phone_local" class="form-control phone-number-input"
-             placeholder="DDD + número" value="${escapeHtml(localNumber)}" maxlength="15" />
+             placeholder="(XX) XXXXX-XXXX" inputmode="numeric"
+             value="${escapeHtml(fmtPhone(localNumber))}" maxlength="15" />
     </div>`;
 }
 
@@ -383,6 +399,9 @@ function renderCadastro() {
   app.innerHTML = '';
   const frag = cloneTemplate('tpl-cadastro');
   app.appendChild(frag);
+
+  const phoneEl = app.querySelector('input[name="phone_local"]');
+  if (phoneEl) applyPhoneMask(phoneEl);
 
   app.querySelector('#form-cadastro').addEventListener('submit', async e => {
     e.preventDefault();
@@ -966,6 +985,9 @@ function openAtletaModal(atleta = null) {
     <button class="btn btn-primary" id="btn-salvar-atleta">${isEdit ? 'Salvar alterações' : 'Cadastrar atleta'}</button>`;
 
   openModal(title, body, footer);
+
+  const phoneLocalEl = document.querySelector('#form-atleta input[name="phone_local"]');
+  if (phoneLocalEl) applyPhoneMask(phoneLocalEl);
 
   document.getElementById('btn-salvar-atleta').addEventListener('click', async () => {
     const form = document.getElementById('form-atleta');
