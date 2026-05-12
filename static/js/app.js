@@ -786,6 +786,7 @@ async function renderAdminAtletas(content) {
 function paintAtletasTable(content) {
   const athletes = state.athletes;
   const isMobile = window.innerWidth < 640;
+  const _dbgW = window.innerWidth; // DEBUG — remover após confirmar
 
   const tableBlock = isMobile ? `
     <div id="atletas-list">
@@ -809,7 +810,7 @@ function paintAtletasTable(content) {
     <div class="section-header">
       <div>
         <h1 class="section-title">Gestão de Atletas</h1>
-        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s)</p>
+        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s) · largura: ${_dbgW}px</p>
       </div>
       <button id="btn-novo-atleta" class="btn btn-primary">+ Novo Atleta</button>
     </div>
