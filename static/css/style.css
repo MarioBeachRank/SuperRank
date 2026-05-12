@@ -1867,3 +1867,70 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 
 .btn-wa:hover { background: #1ebe5d; }
 .btn-wa svg { width: 14px; height: 14px; fill: #fff; flex-shrink: 0; }
+
+/* =====================================================================
+   Result launch / contest form (mesa do atleta)
+   ===================================================================== */
+
+.result-form-card {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.result-set-form {
+  background: var(--color-bg);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.set-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-muted);
+}
+
+.result-score-input {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* =====================================================================
+   Contest detail cards (admin contestações panel)
+   ===================================================================== */
+
+.contest-detail-card {
+  border: 1px solid rgba(217, 64, 64, 0.35);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  margin: 8px 12px 0;
+  background: rgba(217, 64, 64, 0.06);
+}
+
+.contest-detail-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: 4px;
+}
+
+.contest-detail-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: #D94040;
+}
+
+.contest-detail-reason {
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.5;
+  border-left: 3px solid rgba(217, 64, 64, 0.40);
+  padding-left: 8px;
+  margin: 4px 0;
+}

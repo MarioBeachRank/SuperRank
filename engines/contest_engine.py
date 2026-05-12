@@ -43,6 +43,17 @@ def compute_contested_summary(
             for aid, status in r.get("confirmations", {}).items()
             if status == "contested"
         ]
+        contests_detail = [
+            {
+                "athlete_id": aid,
+                "nome": athletes_by_id.get(aid, {}).get("nome", aid),
+                "reason": c.get("reason"),
+                "sets": c.get("sets"),
+                "scores": c.get("scores"),
+                "submitted_at": c.get("submitted_at"),
+            }
+            for aid, c in r.get("contests", {}).items()
+        ]
         summaries.append({
             "result_id": r["id"],
             "round_id": r.get("round_id"),
@@ -51,6 +62,7 @@ def compute_contested_summary(
             "group_idx": r.get("group_idx", 0),
             "group": group_detail,
             "contesters": contesters,
+            "contests": contests_detail,
             "confirmations_count": len(r.get("confirmations", {})),
             "group_size": len(r.get("group", [])),
         })

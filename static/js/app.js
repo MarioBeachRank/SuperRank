@@ -2522,151 +2522,218 @@ function renderMesaResultado(content, ctx) {
     return;
   }
 
-  const { athlete, group, round, pending_result } = ctx;
+  const { athlete, group, round } = ctx;
+  const STATUS_LABEL = { pending_confirmation: 'Aguardando confirmação', confirmed: 'Confirmado', contested: 'Contestado' };
 
-  // Busca resultado confirmado/contestado do grupo (não só o pendente)
-  const fetchResult = async () => {
-    try {
-      const all = await api(`/api/rounds/${round.id}/results`);
-      return all.find(r => r.cat === group.category && r.group_idx === group.group_index) || null;
-    } catch (_) { return null; }
-  };
-
-  const renderContent = (result) => {
-    if (!result) {
-      content.innerHTML = `
-        <div style="padding:var(--space-md);">
-          <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:16px;">Resultado</h2>
-          <div class="empty-state" style="padding:40px 20px;">
-            <div class="empty-state-icon">📋</div>
-            <p class="empty-state-title">Resultado não lançado</p>
-            <p>O admin ainda não lançou o resultado deste grupo.</p>
+  // Builds set score input form (for launch or contest)
+  function buildSetForm(prefix) {
+    return (group.sets_named || []).map((s, i) => {
+      const raw = (group.sets || [])[i] || {};
+      return `
+        <div class="result-set-form">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span class="set-label">Set ${s.set}</span>
           </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-size:12px;flex:1;min-width:80px;">${s.team_a.map(escapeHtml).join(' + ')}</span>
+            <input type="number" name="${prefix}sa${s.set}" min="0" max="20" placeholder="—"
+              class="field-input result-score-input" style="width:54px;text-align:center;padding:6px;" />
+            <span style="font-weight:700;font-size:16px;">×</span>
+            <input type="number" name="${prefix}sb${s.set}" min="0" max="20" placeholder="—"
+              class="field-input result-score-input" style="width:54px;text-align:center;padding:6px;" />
+            <span style="font-size:12px;flex:1;min-width:80px;text-align:right;">${s.team_b.map(escapeHtml).join(' + ')}</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:6px;cursor:pointer;">
+            <input type="checkbox" name="${prefix}stb${s.set}" /> Super tie-break (chegou 5×5)
+          </label>
+          <input type="hidden" name="${prefix}ta${s.set}" value='${JSON.stringify(raw.team_a||[])}' />
+          <input type="hidden" name="${prefix}tb${s.set}" value='${JSON.stringify(raw.team_b||[])}' />
         </div>`;
-      return;
-    }
+    }).join('');
+  }
 
-    const statusLabel = { pending_confirmation: 'Aguardando confirmação', confirmed: 'Confirmado', contested: 'Contestado' };
-    const myConfirmation = result.confirmations?.[athlete.id];
-    const canConfirm = result.status === 'pending_confirmation' && !myConfirmation;
+  function collectSets(container, prefix) {
+    return (group.sets_named || []).map((s, i) => {
+      const raw = (group.sets || [])[i] || {};
+      const sa = parseInt(container.querySelector(`[name="${prefix}sa${s.set}"]`)?.value);
+      const sb = parseInt(container.querySelector(`[name="${prefix}sb${s.set}"]`)?.value);
+      const stb = container.querySelector(`[name="${prefix}stb${s.set}"]`)?.checked || false;
+      return { set: s.set, team_a: raw.team_a||[], team_b: raw.team_b||[], score_a: sa, score_b: sb, is_super_tiebreak: stb };
+    });
+  }
 
-    const scoresRows = group.athlete_ids.map((aid, i) => {
+  function scoresTableHtml(result) {
+    return group.athlete_ids.map((aid, i) => {
       const nome = group.names[i];
       const sc = result.scores?.[aid];
       if (!sc) return '';
-      const setsBadges = (sc.sets || []).map((pts, si) => {
-        const cls = pts === 3 ? 'win' : pts === 1 ? 'loss' : '';
-        return `<span class="result-set-badge ${cls}">${pts}pts</span>`;
-      }).join('');
+      const badges = (sc.sets||[]).map(pts =>
+        `<span class="result-set-badge ${pts===3?'win':'loss'}">${pts}pts</span>`).join('');
       const isMe = aid === athlete.id;
-      return `
-        <tr>
-          <td><strong>${escapeHtml(nome)}</strong>${isMe ? ' <span class="badge badge-ativo" style="font-size:10px;">Eu</span>' : ''}</td>
-          <td><div class="result-set-scores">${setsBadges}</div></td>
-          <td class="pts-total">${sc.total ?? 0}</td>
-        </tr>`;
+      return `<tr>
+        <td><strong>${escapeHtml(nome)}</strong>${isMe?' <span class="badge badge-ativo" style="font-size:10px;">Eu</span>':''}</td>
+        <td><div class="result-set-scores">${badges}</div></td>
+        <td class="pts-total">${sc.total??0}</td>
+      </tr>`;
     }).join('');
+  }
 
-    const confirmStatus = group.athlete_ids.map((aid, i) => {
-      const nome = group.names[i];
+  function confirmStatusHtml(result) {
+    return group.athlete_ids.map((aid, i) => {
       const c = result.confirmations?.[aid];
-      return `<span style="font-size:12px;margin-right:8px;">${escapeHtml(nome)}: ${c ? (c === 'confirmed' ? '✅' : '❌') : '⏳'}</span>`;
+      return `<span style="font-size:12px;margin-right:8px;">${escapeHtml(group.names[i])}: ${c==='confirmed'?'✅':c==='contested'?'❌':'⏳'}</span>`;
     }).join('');
+  }
 
-    content.innerHTML = `
-      <div style="padding:var(--space-md);">
-        <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Resultado</h2>
-        <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
-          ${catLabel(group.category)} · Grupo ${group.group_index + 1} · Rodada ${round?.round_number ?? '—'}
-        </p>
+  let showContestForm = false;
 
-        <div class="result-card">
-          <div class="result-card-header">
-            ${catLabel(group.category)}
-            <span>Grupo ${group.group_index + 1}</span>
-            <span class="badge badge-${result.status === 'confirmed' ? 'confirmed' : result.status === 'contested' ? 'contested' : 'pending'}" style="margin-left:auto;">
-              ${statusLabel[result.status] || result.status}
-            </span>
-          </div>
-          <table class="result-scores-table">
-            <thead><tr><th>Atleta</th><th>Sets</th><th>Total</th></tr></thead>
-            <tbody>${scoresRows}</tbody>
-          </table>
-          <div class="result-footer">
-            <div style="flex:1;font-size:12px;color:var(--color-text-muted);">${confirmStatus}</div>
-          </div>
+  const fetchAndRender = async () => {
+    let result = null;
+    try {
+      const all = await api(`/api/rounds/${round.id}/results`);
+      result = all.find(r => r.cat === group.category && r.group_idx === group.group_index) || null;
+    } catch (_) {}
+    paint(result);
+  };
+
+  const paint = (result) => {
+    const header = `
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Resultado</h2>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
+        ${catLabel(group.category)} · Grupo ${group.group_index + 1} · Rodada ${round?.round_number ?? '—'}
+      </p>`;
+
+    // ── No result yet: athlete launches it ───────────────────────────────────
+    if (!result) {
+      content.innerHTML = `<div style="padding:var(--space-md);">
+        ${header}
+        <p style="font-size:13px;margin-bottom:16px;">Lance o placar da partida abaixo:</p>
+        <div class="result-form-card">
+          ${buildSetForm('l_')}
+          <p id="launch-error" class="field-error hidden" style="margin-top:8px;"></p>
+          <button id="btn-lancar" class="btn btn-primary" style="width:100%;margin-top:16px;">
+            Lançar resultado
+          </button>
         </div>
-
-        ${result.contest_reason ? `
-          <div class="alert" style="background:#FBE9E7;border-color:#FFAB91;color:#BF360C;margin-bottom:16px;">
-            Contestado: ${escapeHtml(result.contest_reason)}
-          </div>` : ''}
-
-        ${canConfirm ? `
-          <div class="confirm-result-card">
-            <p class="confirm-result-title">Confirmar Resultado</p>
-            <p style="font-size:13px;">Confira o placar acima e confirme ou conteste.</p>
-            <div class="confirm-result-actions">
-              <button id="btn-confirmar" class="btn btn-primary">Confirmar</button>
-              <button id="btn-contestar" class="btn btn-ghost" style="color:#D94040;">Contestar</button>
-            </div>
-          </div>` : myConfirmation ? `
-          <div class="alert alert-info">Você já ${myConfirmation === 'confirmed' ? 'confirmou' : 'contestou'} este resultado.</div>` : ''}
-
-        <p id="resultado-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
       </div>`;
 
-    if (!canConfirm) return;
-
-    const msgEl = content.querySelector('#resultado-msg');
-
-    content.querySelector('#btn-confirmar').addEventListener('click', async () => {
-      try {
-        await api(`/api/results/${result.id}/confirm`, { method: 'POST', body: { action: 'confirmed' } });
-        msgEl.textContent = '✓ Resultado confirmado!';
-        msgEl.style.color = 'var(--color-cat-c)';
-        msgEl.classList.remove('hidden');
-        setTimeout(() => location.hash = '#mesa/home', 1200);
-      } catch (err) {
-        msgEl.textContent = `Erro: ${err.message}`;
-        msgEl.style.color = '#D94040';
-        msgEl.classList.remove('hidden');
-      }
-    });
-
-    content.querySelector('#btn-contestar').addEventListener('click', () => {
-      openModal('Contestar Resultado', `
-        <p style="margin-bottom:12px;">Informe o motivo da contestação:</p>
-        <textarea id="contest-reason" rows="4" style="width:100%;padding:8px;border:var(--border);border-radius:var(--radius-sm);font-size:14px;resize:vertical;" placeholder="Descreva o problema com o placar..."></textarea>
-        <p id="contest-error" class="field-error hidden"></p>`,
-        `<button id="btn-contest-confirmar" class="btn btn-primary">Enviar contestação</button>
-         <button id="btn-contest-cancelar" class="btn btn-ghost">Cancelar</button>`
-      );
-      document.getElementById('btn-contest-cancelar').addEventListener('click', closeModal);
-      document.getElementById('btn-contest-confirmar').addEventListener('click', async () => {
-        const reason = document.getElementById('contest-reason').value.trim();
-        if (!reason) {
-          document.getElementById('contest-error').textContent = 'Informe o motivo.';
-          document.getElementById('contest-error').classList.remove('hidden');
-          return;
-        }
+      content.querySelector('#btn-lancar').addEventListener('click', async () => {
+        const btn = content.querySelector('#btn-lancar');
+        const errEl = content.querySelector('#launch-error');
+        const sets = collectSets(content, 'l_');
+        btn.disabled = true; btn.textContent = 'Lançando…'; errEl.classList.add('hidden');
         try {
-          await api(`/api/results/${result.id}/confirm`, { method: 'POST', body: { action: 'contested', reason } });
-          closeModal();
-          msgEl.textContent = '⚠ Contestação registrada. O admin analisará.';
-          msgEl.style.color = '#BA7517';
-          msgEl.classList.remove('hidden');
-          setTimeout(() => location.hash = '#mesa/home', 1500);
+          await api(`/api/rounds/${round.id}/results`, {
+            method: 'POST', body: { cat: group.category, group_idx: group.group_index, sets },
+          });
+          await fetchAndRender();
         } catch (err) {
-          document.getElementById('contest-error').textContent = err.message;
-          document.getElementById('contest-error').classList.remove('hidden');
+          errEl.textContent = err.message; errEl.classList.remove('hidden');
+          btn.disabled = false; btn.textContent = 'Lançar resultado';
         }
       });
+      return;
+    }
+
+    // ── Result exists ────────────────────────────────────────────────────────
+    const myConfirmation = result.confirmations?.[athlete.id];
+    const iSubmitted = result.submitted_by === athlete.id;
+    const canAct = result.status !== 'confirmed' && !myConfirmation;
+
+    const resultCard = `
+      <div class="result-card" style="margin-bottom:16px;">
+        <div class="result-card-header">
+          ${catLabel(group.category)} Grupo ${group.group_index + 1}
+          <span class="badge badge-${result.status==='confirmed'?'active':result.status==='contested'?'pending':'inativo'}" style="margin-left:auto;">
+            ${STATUS_LABEL[result.status]||result.status}
+          </span>
+        </div>
+        <p style="font-size:11px;color:var(--color-text-muted);padding:6px 12px 0;">
+          Lançado por: <strong>${escapeHtml(result.submitted_by_name||'—')}</strong>
+        </p>
+        <table class="result-scores-table">
+          <thead><tr><th>Atleta</th><th>Sets</th><th>Pts</th></tr></thead>
+          <tbody>${scoresTableHtml(result)}</tbody>
+        </table>
+        <div class="result-footer">
+          <div style="font-size:12px;color:var(--color-text-muted);">${confirmStatusHtml(result)}</div>
+        </div>
+      </div>`;
+
+    // Contest form (inline)
+    const contestFormHtml = `
+      <div class="result-form-card" style="border-color:rgba(217,64,64,0.4);">
+        <p style="font-size:14px;font-weight:700;color:#D94040;margin-bottom:12px;">Contestação</p>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="field-label">Motivo *</label>
+          <textarea id="contest-reason" class="field-input" rows="3"
+            placeholder="Descreva por que o placar está incorreto…" style="resize:vertical;"></textarea>
+        </div>
+        <p class="field-label" style="margin-bottom:10px;">Placar que considera correto:</p>
+        ${buildSetForm('c_')}
+        <p id="contest-error" class="field-error hidden" style="margin-top:8px;"></p>
+        <div style="display:flex;gap:10px;margin-top:14px;">
+          <button id="btn-cancelar-contest" class="btn btn-ghost" style="flex:1;">Cancelar</button>
+          <button id="btn-enviar-contest" class="btn btn-primary" style="flex:1;background:#D94040;">Enviar contestação</button>
+        </div>
+      </div>`;
+
+    const actionsHtml = canAct && !showContestForm ? `
+      <div style="display:flex;gap:10px;margin-bottom:16px;">
+        <button id="btn-confirmar" class="btn btn-primary" style="flex:1;">✅ Confirmar resultado</button>
+        <button id="btn-toggle-contest" class="btn btn-ghost" style="flex:1;color:#D94040;">❌ Contestar</button>
+      </div>` : '';
+
+    const myStatusHtml = myConfirmation ? `
+      <div class="alert alert-${myConfirmation==='confirmed'?'info':'warning'}" style="margin-top:4px;">
+        ${myConfirmation==='confirmed' ? '✅ Você confirmou este resultado.' : '❌ Você contestou. O admin irá revisar.'}
+      </div>` : '';
+
+    content.innerHTML = `<div style="padding:var(--space-md);">
+      ${header}${resultCard}${actionsHtml}
+      ${canAct && showContestForm ? contestFormHtml : ''}
+      ${myStatusHtml}
+    </div>`;
+
+    // Confirmar
+    content.querySelector('#btn-confirmar')?.addEventListener('click', async () => {
+      const btn = content.querySelector('#btn-confirmar');
+      btn.disabled = true; btn.textContent = 'Confirmando…';
+      try {
+        await api(`/api/results/${result.id}/confirm`, { method: 'POST', body: { action: 'confirmed' } });
+        await fetchAndRender();
+      } catch (err) { showToast(err.message, 'error'); btn.disabled = false; btn.textContent = '✅ Confirmar resultado'; }
+    });
+
+    // Mostrar/ocultar form de contestação
+    content.querySelector('#btn-toggle-contest')?.addEventListener('click', () => {
+      showContestForm = true; paint(result);
+    });
+    content.querySelector('#btn-cancelar-contest')?.addEventListener('click', () => {
+      showContestForm = false; paint(result);
+    });
+
+    // Enviar contestação
+    content.querySelector('#btn-enviar-contest')?.addEventListener('click', async () => {
+      const btn = content.querySelector('#btn-enviar-contest');
+      const errEl = content.querySelector('#contest-error');
+      const reason = content.querySelector('#contest-reason')?.value?.trim();
+      if (!reason) { errEl.textContent = 'Informe o motivo.'; errEl.classList.remove('hidden'); return; }
+      const sets = collectSets(content, 'c_');
+      btn.disabled = true; btn.textContent = 'Enviando…'; errEl.classList.add('hidden');
+      try {
+        await api(`/api/results/${result.id}/confirm`, { method: 'POST', body: { action: 'contested', reason, sets } });
+        showContestForm = false;
+        await fetchAndRender();
+      } catch (err) {
+        errEl.textContent = err.message; errEl.classList.remove('hidden');
+        btn.disabled = false; btn.textContent = 'Enviar contestação';
+      }
     });
   };
 
-  content.innerHTML = `<p class="placeholder-text">Carregando resultado…</p>`;
-  fetchResult().then(renderContent);
+  content.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando resultado…</p>`;
+  fetchAndRender();
 }
 
 // ---------------------------------------------------------------------------
@@ -3862,17 +3929,50 @@ async function renderAdminContestacoes(content) {
     return `<span class="contested-group-status">${s}</span>`;
   }
 
-  const cards = contested.map(item => {
-    const groupRows = item.group.map(m => `
-      <div class="contested-group-row">
-        <span class="contested-group-nome">${escapeHtml(m.nome)}</span>
-        <span class="contested-group-score">${m.score !== null && m.score !== undefined ? m.score : '—'}</span>
-        ${statusLabel(m.confirmation)}
-      </div>`).join('');
+  function contestedScoresTable(scores, group) {
+    if (!scores || !Object.keys(scores).length) return '';
+    const rows = group.map(m => {
+      const sc = scores[m.athlete_id];
+      if (!sc) return '';
+      const badges = (sc.sets || []).map(p => `<span class="result-set-badge">${p}</span>`).join('');
+      return `<tr>
+        <td>${escapeHtml(m.nome)}</td>
+        <td><div class="result-set-scores">${badges}</div></td>
+        <td class="pts-total">${sc.total ?? '—'}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="result-scores-table" style="margin-top:6px;">
+      <thead><tr><th>Atleta</th><th>Sets</th><th>Pts</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
 
-    const contesters = item.contesters.length
-      ? `<span style="font-size:12px;color:#B91C1C;">⚑ ${item.contesters.map(escapeHtml).join(', ')}</span>`
-      : '';
+  function originalScoresTable(group) {
+    const rows = group.map(m => {
+      const sc = m.score;
+      if (!sc || typeof sc !== 'object') return `<tr><td>${escapeHtml(m.nome)}</td><td colspan="2">—</td></tr>`;
+      const badges = (sc.sets || []).map(p => `<span class="result-set-badge">${p}</span>`).join('');
+      return `<tr>
+        <td>${escapeHtml(m.nome)}</td>
+        <td><div class="result-set-scores">${badges}</div></td>
+        <td class="pts-total">${sc.total ?? '—'}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="result-scores-table">
+      <thead><tr><th>Atleta</th><th>Sets</th><th>Pts</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  const cards = contested.map(item => {
+    const contestDetailsHtml = (item.contests || []).map(c => `
+      <div class="contest-detail-card">
+        <div class="contest-detail-header">
+          <span class="contest-detail-name">⚑ ${escapeHtml(c.nome)}</span>
+        </div>
+        <p class="contest-detail-reason">${escapeHtml(c.reason || '—')}</p>
+        ${c.scores ? `<p style="font-size:11px;color:var(--color-text-muted);margin:8px 0 2px;">Placar proposto:</p>${contestedScoresTable(c.scores, item.group)}` : ''}
+      </div>`).join('');
 
     return `
       <div class="contested-card" data-result-id="${escapeHtml(item.result_id)}">
@@ -3882,11 +3982,12 @@ async function renderAdminContestacoes(content) {
           </span>
           <span class="contested-card-meta">Rodada ${escapeHtml(item.round_id)}</span>
         </div>
-        ${groupRows}
-        ${contesters ? `<div style="margin-top:8px;">${contesters}</div>` : ''}
+        <p style="font-size:11px;color:var(--color-text-muted);margin:8px 12px 2px;">Placar lançado:</p>
+        <div style="padding:0 12px 8px;">${originalScoresTable(item.group)}</div>
+        ${contestDetailsHtml}
         <div class="contested-card-actions">
           <button class="btn btn-primary btn-sm btn-confirm-result" data-id="${escapeHtml(item.result_id)}">
-            Confirmar resultado
+            Confirmar placar lançado
           </button>
           <button class="btn btn-ghost btn-sm btn-override-result"
             data-id="${escapeHtml(item.result_id)}"

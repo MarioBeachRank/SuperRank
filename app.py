@@ -981,10 +981,14 @@ def get_round_results(round_id):
 
 
 @app.route("/api/rounds/<round_id>/results", methods=["POST"])
-@require_admin
 def submit_result(round_id):
-    """Admin lança resultado de um grupo (Art. 7+8+9). Body: {cat, group_idx, sets}."""
+    """Atleta ou admin lança resultado de um grupo (Art. 7+8+9). Body: {cat, group_idx, sets}."""
     from engines.score_engine import validate_group_scores, calculate_group_result
+
+    is_admin = session.get("is_admin", False)
+    athlete_id = session.get("atleta_id")
+    if not is_admin and not athlete_id:
+        return jsonify({"error": "Autenticação necessária"}), 401
 
     rounds_db = read_json("rounds.json")
     rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
@@ -994,7 +998,7 @@ def submit_result(round_id):
     body = request.get_json(silent=True) or {}
     cat = body.get("cat")
     group_idx = body.get("group_idx")
-    sets = body.get("sets")  # lista de 3 dicts com score
+    sets = body.get("sets")
 
     if cat not in (rnd.get("groups") or {}):
         return jsonify({"error": "Categoria inválida"}), 400
@@ -1003,6 +1007,11 @@ def submit_result(round_id):
     if not isinstance(group_idx, int) or group_idx < 0 or group_idx >= len(groups_cat):
         return jsonify({"error": "Índice de grupo inválido"}), 400
 
+    group = groups_cat[group_idx]
+
+    if not is_admin and athlete_id not in group:
+        return jsonify({"error": "Você não pertence a este grupo"}), 403
+
     if not isinstance(sets, list):
         return jsonify({"error": "Campo 'sets' é obrigatório"}), 400
 
@@ -1010,16 +1019,27 @@ def submit_result(round_id):
     if errors:
         return jsonify({"error": "Placar inválido", "details": errors}), 400
 
-    group = groups_cat[group_idx]
+    results_db = read_json("results.json")
+    existing = next(
+        (r for r in results_db["data"]
+         if r["round_id"] == round_id and r["cat"] == cat and r["group_idx"] == group_idx),
+        None,
+    )
+
+    # Atleta só lança se ainda não existe resultado; admin sempre pode sobrescrever
+    if existing and not is_admin:
+        return jsonify({"error": "Resultado já lançado. Use a contestação se discordar."}), 409
+
     score_result = calculate_group_result(group, sets)
 
-    results_db = read_json("results.json")
-
-    # Remove resultado anterior do mesmo grupo se existir
     results_db["data"] = [
         r for r in results_db["data"]
         if not (r["round_id"] == round_id and r["cat"] == cat and r["group_idx"] == group_idx)
     ]
+
+    submitted_by = "admin" if is_admin else athlete_id
+    # Quem lança já confirma o próprio resultado
+    initial_confirmations = {} if is_admin else {athlete_id: "confirmed"}
 
     result_record = {
         "id": str(uuid.uuid4()),
@@ -1029,12 +1049,12 @@ def submit_result(round_id):
         "group_idx": group_idx,
         "group": group,
         "sets": sets,
-        "scores": score_result,  # {athlete_id: {sets:[...], total: N}}
-        "status": "pending_confirmation",  # pending_confirmation | confirmed | contested
-        "submitted_by": "admin",
+        "scores": score_result,
+        "status": "pending_confirmation",
+        "submitted_by": submitted_by,
         "submitted_at": now_iso(),
-        "confirmations": {},  # {athlete_id: "confirmed"|"contested"}
-        "contest_reason": None,
+        "confirmations": initial_confirmations,
+        "contests": {},   # {athlete_id: {reason, sets, scores, submitted_at}}
     }
     results_db["data"].append(result_record)
     write_json("results.json", results_db)
@@ -1046,11 +1066,14 @@ def submit_result(round_id):
 @app.route("/api/results/<result_id>/confirm", methods=["POST"])
 @require_atleta
 def confirm_result(result_id):
-    """Atleta confirma ou contesta um resultado (Art. 11)."""
+    """Atleta confirma ou contesta um resultado. Contest inclui motivo + placar correto."""
+    from engines.score_engine import validate_group_scores, calculate_group_result
+
     athlete_id = session["atleta_id"]
     body = request.get_json(silent=True) or {}
     action = body.get("action")  # "confirmed" | "contested"
-    reason = body.get("reason", "")
+    reason = (body.get("reason") or "").strip()
+    contested_sets = body.get("sets")  # versão do atleta (opcional na contestação)
 
     if action not in ("confirmed", "contested"):
         return jsonify({"error": "action deve ser 'confirmed' ou 'contested'"}), 400
@@ -1067,11 +1090,22 @@ def confirm_result(result_id):
         return jsonify({"error": "Resultado já confirmado"}), 400
 
     result["confirmations"][athlete_id] = action
+
     if action == "contested":
+        if not reason:
+            return jsonify({"error": "Motivo da contestação é obrigatório"}), 400
+        contest_entry = {"reason": reason, "submitted_at": now_iso()}
+        if contested_sets:
+            errors = validate_group_scores(contested_sets)
+            if errors:
+                return jsonify({"error": "Placar contestado inválido", "details": errors}), 400
+            contest_entry["sets"] = contested_sets
+            contest_entry["scores"] = calculate_group_result(result["group"], contested_sets)
+        if "contests" not in result:
+            result["contests"] = {}
+        result["contests"][athlete_id] = contest_entry
         result["status"] = "contested"
-        result["contest_reason"] = reason
     else:
-        # Confirma se todos os 4 atletas confirmaram (ou maioria — Admin resolve contests)
         if all(result["confirmations"].get(aid) == "confirmed" for aid in result["group"]):
             result["status"] = "confirmed"
 
@@ -1178,16 +1212,29 @@ def _enrich_result(result: dict, athletes_by_id: dict) -> dict:
     """Adiciona nomes aos athlete_ids no resultado."""
     enriched = dict(result)
     enriched["group_named"] = [
-        athletes_by_id.get(aid, {}).get("nome", aid) for aid in result["group"]
+        _display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in result["group"]
     ]
     enriched["scores_named"] = {
-        athletes_by_id.get(aid, {}).get("nome", aid): v
+        _display_name(athletes_by_id.get(aid, {"nome": aid})): v
         for aid, v in result.get("scores", {}).items()
     }
     enriched["confirmations_named"] = {
-        athletes_by_id.get(aid, {}).get("nome", aid): v
+        _display_name(athletes_by_id.get(aid, {"nome": aid})): v
         for aid, v in result.get("confirmations", {}).items()
     }
+    # Enriquece contestações com nomes
+    enriched["contests_named"] = {
+        _display_name(athletes_by_id.get(aid, {"nome": aid})): contest
+        for aid, contest in result.get("contests", {}).items()
+    }
+    # Nome de quem lançou
+    submitted_by = result.get("submitted_by", "admin")
+    if submitted_by == "admin":
+        enriched["submitted_by_name"] = "Admin"
+    else:
+        enriched["submitted_by_name"] = _display_name(
+            athletes_by_id.get(submitted_by, {"nome": submitted_by})
+        )
     return enriched
 
 
