@@ -1934,3 +1934,200 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   padding-left: 8px;
   margin: 4px 0;
 }
+
+/* =====================================================================
+   Mesa: Mini-ranking (home do atleta)
+   ===================================================================== */
+
+.mini-ranking-card {
+  background: var(--color-surface);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.mini-ranking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--space-md);
+  background: var(--color-surface-2);
+  border-bottom: var(--border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.mini-ranking-link {
+  font-size: 12px;
+  color: var(--color-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.mini-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px var(--space-md);
+  border-bottom: var(--border);
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.mini-rank-row:last-child { border-bottom: none; }
+
+.mini-rank-row.mini-rank-me {
+  background: rgba(255, 107, 53, 0.12);
+  border-left: 3px solid var(--color-primary);
+}
+
+.mini-rank-pos {
+  min-width: 28px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.mini-rank-me .mini-rank-pos { color: var(--color-primary); }
+
+.mini-rank-nome {
+  flex: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-rank-you {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.mini-rank-pts {
+  font-weight: 700;
+  color: var(--color-primary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.mini-rank-dots {
+  text-align: center;
+  padding: 4px var(--space-md);
+  font-size: 16px;
+  color: var(--color-text-muted);
+  letter-spacing: 4px;
+  border-bottom: var(--border);
+}
+
+/* =====================================================================
+   Mesa: Tela de Ranking completo
+   ===================================================================== */
+
+.mesa-ranking-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.mesa-ranking-tab {
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mesa-ranking-tab.active,
+.mesa-ranking-tab:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.mesa-ranking-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.mesa-ranking-table th {
+  padding: 8px 12px;
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  text-align: left;
+  border-bottom: var(--border);
+}
+
+.mesa-ranking-table td {
+  padding: 10px 12px;
+  border-bottom: var(--border);
+  vertical-align: middle;
+}
+
+.mesa-ranking-table tr:last-child td { border-bottom: none; }
+
+.mesa-ranking-table tr.mesa-ranking-me {
+  background: rgba(255, 107, 53, 0.12);
+  border-left: 3px solid var(--color-primary);
+}
+
+.mesa-ranking-pos {
+  font-weight: 700;
+  font-size: 14px;
+  min-width: 32px;
+  color: var(--color-text-muted);
+}
+
+.mesa-ranking-me .mesa-ranking-pos { color: var(--color-primary); }
+
+.mesa-ranking-nome {
+  font-weight: 500;
+}
+
+.mesa-ranking-you-tag {
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.mesa-ranking-pts {
+  font-weight: 800;
+  color: var(--color-primary);
+  font-size: 15px;
+}
+
+.mesa-ranking-stat {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}

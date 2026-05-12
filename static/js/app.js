@@ -1978,6 +1978,7 @@ async function renderMesa(sub) {
     case 'resultado': renderMesaResultado(content, ctx); break;
     case 'historico': await renderMesaHistorico(content); break;
     case 'perfil':    await renderMesaPerfil(content); break;
+    case 'ranking':   await renderMesaRanking(content, ctx); break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela disponível em sprint futuro.</p>`;
   }
@@ -2020,6 +2021,46 @@ async function renderMesaHome(content, ctx) {
     myRank = catRanking.find(r => r.athlete_id === ctx.athlete.id) || null;
     historyList = histData.history || [];
   } catch (_) {}
+
+  // Ranking mini-section: top 5 + neighborhood
+  function buildMiniRanking() {
+    if (!catRanking.length) return '';
+    const myIdx = catRanking.findIndex(r => r.athlete_id === ctx.athlete.id);
+    const medals = ['🥇','🥈','🥉'];
+
+    function rankRow(r, idx, isMe) {
+      const pos = idx + 1;
+      const medal = medals[idx] || '';
+      return `<div class="mini-rank-row${isMe ? ' mini-rank-me' : ''}">
+        <span class="mini-rank-pos">${medal || pos + '°'}</span>
+        <span class="mini-rank-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mini-rank-you">você</span>' : ''}</span>
+        <span class="mini-rank-pts">${r.points} pts</span>
+      </div>`;
+    }
+
+    const top5 = catRanking.slice(0, 5);
+    let rows = top5.map((r, i) => rankRow(r, i, r.athlete_id === ctx.athlete.id));
+
+    // If athlete is beyond top 5, show separator + neighborhood
+    if (myIdx >= 5) {
+      const start = Math.max(5, myIdx - 2);
+      const end   = Math.min(catRanking.length, myIdx + 3);
+      const neighborhood = catRanking.slice(start, end);
+      rows.push(`<div class="mini-rank-dots">···</div>`);
+      neighborhood.forEach((r, i) => {
+        rows.push(rankRow(r, start + i, r.athlete_id === ctx.athlete.id));
+      });
+    }
+
+    return `
+      <div class="mini-ranking-card" style="margin-bottom:16px;">
+        <div class="mini-ranking-header">
+          <span>Ranking ${catLabel(athleteCat)}</span>
+          <a href="#mesa/ranking" class="mini-ranking-link">Ver completo →</a>
+        </div>
+        ${rows.join('')}
+      </div>`;
+  }
 
   const catTotal = catRanking.length;
   const rank = myRank?.rank;
@@ -2109,6 +2150,8 @@ async function renderMesaHome(content, ctx) {
     <div style="padding:var(--space-md);">
       ${heroHtml}
 
+      ${buildMiniRanking()}
+
       ${lastResultHtml}
 
       ${round ? `
@@ -2140,13 +2183,115 @@ async function renderMesaHome(content, ctx) {
           <p style="font-size:13px;font-weight:600;">Meu Grupo</p>
           ${group ? `<p style="font-size:11px;color:var(--color-text-muted);">Cat ${group.category} · Grupo ${group.group_index + 1}</p>` : ''}
         </a>
-        <a href="#mesa/resultado" class="card" style="display:block;text-align:center;text-decoration:none;grid-column:1/-1;${pending_result ? 'border-left:3px solid var(--color-accent);' : ''}">
+        <a href="#mesa/resultado" class="card" style="display:block;text-align:center;text-decoration:none;${pending_result ? 'border-left:3px solid var(--color-accent);' : ''}">
           <p style="font-size:20px;margin-bottom:4px;">📋</p>
           <p style="font-size:13px;font-weight:600;">Resultado</p>
           <p style="font-size:11px;color:var(--color-text-muted);">${pending_result ? 'Aguardando sua confirmação' : 'Ver resultado do grupo'}</p>
         </a>
+        <a href="#mesa/ranking" class="card" style="display:block;text-align:center;text-decoration:none;">
+          <p style="font-size:20px;margin-bottom:4px;">🏆</p>
+          <p style="font-size:13px;font-weight:600;">Ranking</p>
+          ${myRank ? `<p style="font-size:11px;color:var(--color-text-muted);">${myRank.rank}° lugar</p>` : ''}
+        </a>
       </div>
     </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Mesa: Ranking
+// ---------------------------------------------------------------------------
+
+async function renderMesaRanking(content, ctx) {
+  const season = ctx?.season;
+  const myId   = ctx?.athlete?.id;
+  const myCat  = ctx?.athlete?.current_category;
+
+  content.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando ranking…</p>`;
+
+  if (!season) {
+    content.innerHTML = `<div style="padding:var(--space-md);"><p class="placeholder-text">Nenhuma temporada ativa.</p></div>`;
+    return;
+  }
+
+  let allRanking = {};
+  try {
+    allRanking = await api(`/api/seasons/${season.id}/ranking`);
+  } catch (err) {
+    content.innerHTML = `<div style="padding:var(--space-md);"><p class="placeholder-text">Erro ao carregar ranking.</p></div>`;
+    return;
+  }
+
+  const CATS = ['A','B','C','D'];
+  const availCats = CATS.filter(c => (allRanking[c] || []).length > 0);
+  if (!availCats.length) {
+    content.innerHTML = `<div style="padding:var(--space-md);">
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:12px;">Ranking</h2>
+      <p style="color:var(--color-text-muted);">Ainda sem dados de ranking. Os resultados aparecerão aqui após as primeiras partidas.</p>
+    </div>`;
+    return;
+  }
+
+  // Pre-select athlete's category if available, otherwise first with data
+  let activeCat = (myCat && availCats.includes(myCat)) ? myCat : availCats[0];
+
+  const medals = ['🥇','🥈','🥉'];
+
+  function renderTable(cat) {
+    const rows = allRanking[cat] || [];
+    if (!rows.length) return `<p style="color:var(--color-text-muted);padding:20px 16px;">Nenhum atleta nesta categoria ainda.</p>`;
+    return `<table class="mesa-ranking-table">
+      <thead><tr>
+        <th>#</th><th>Atleta</th><th>Pts</th><th>V</th><th>Saldo</th>
+      </tr></thead>
+      <tbody>${rows.map((r, i) => {
+        const isMe = r.athlete_id === myId;
+        const pos  = i + 1;
+        const medal = medals[i] || '';
+        return `<tr class="${isMe ? 'mesa-ranking-me' : ''}">
+          <td class="mesa-ranking-pos">${medal || (pos + '°')}</td>
+          <td class="mesa-ranking-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mesa-ranking-you-tag">você</span>' : ''}</td>
+          <td class="mesa-ranking-pts">${r.points}</td>
+          <td class="mesa-ranking-stat">${r.wins}</td>
+          <td class="mesa-ranking-stat">${r.saldo >= 0 ? '+' : ''}${r.saldo}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  }
+
+  function paint(cat) {
+    content.querySelector('#mesa-ranking-table-area').innerHTML = renderTable(cat);
+    // Scroll highlighted row into view
+    const meRow = content.querySelector('.mesa-ranking-me');
+    if (meRow) meRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    // Update active tab
+    content.querySelectorAll('.mesa-ranking-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.cat === cat);
+    });
+  }
+
+  const tabs = availCats.map(c => `
+    <button class="mesa-ranking-tab${c === activeCat ? ' active' : ''}" data-cat="${c}">
+      ${catLabel(c)}
+    </button>`).join('');
+
+  content.innerHTML = `
+    <div style="padding:var(--space-md);">
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:12px;">Ranking</h2>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">${escapeHtml(season.name)}</p>
+      <div class="mesa-ranking-tabs">${tabs}</div>
+      <div id="mesa-ranking-table-area">${renderTable(activeCat)}</div>
+    </div>`;
+
+  content.querySelectorAll('.mesa-ranking-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeCat = btn.dataset.cat;
+      paint(activeCat);
+    });
+  });
+
+  // Auto-scroll to athlete on first load
+  const meRow = content.querySelector('.mesa-ranking-me');
+  if (meRow) meRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 // ---------------------------------------------------------------------------
