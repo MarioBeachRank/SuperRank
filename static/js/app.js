@@ -73,12 +73,14 @@ function openModal(title, bodyHtml, footerHtml = '') {
   closeModal();
   const frag = cloneTemplate('tpl-modal');
   document.body.appendChild(frag);
+  const overlay = document.getElementById('modal-overlay');
+  overlay.classList.add('open');
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = bodyHtml;
   document.getElementById('modal-footer').innerHTML = footerHtml;
   document.getElementById('modal-close').addEventListener('click', closeModal);
-  document.getElementById('modal-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('modal-overlay')) closeModal();
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) closeModal();
   });
 }
 
