@@ -1617,11 +1617,18 @@ function renderMediationCard(pg, athletesById) {
   // Slots de cada atleta (via groups_named, mas não temos os slots aqui → mostrar quem tem WO)
   const woIds = slotInfo.wo_athlete_ids || [];
 
+  const dateLine = round.start_date && round.end_date
+    ? `${round.start_date} → ${round.end_date}`
+    : (round.target_date || '');
+
   return `
     <div class="mediation-group-card">
       <div class="mediation-group-header">
         ${catLabel(cat)}
         <span style="font-weight:600;margin-left:4px;">Grupo ${groupIdx + 1}</span>
+        <span style="font-size:12px;color:var(--color-text-muted);margin-left:8px;">
+          Rodada ${round.round_number}${dateLine ? ' · ' + dateLine : ''}
+        </span>
         <span style="flex:1;"></span>
         <span class="badge badge-pending">${statusLabel}</span>
         <button class="btn btn-ghost btn-sm btn-resolve-round" data-round-id="${round.id}" style="margin-left:8px;">
