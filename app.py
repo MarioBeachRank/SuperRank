@@ -47,6 +47,40 @@ def hash_pin(pin: str) -> str:
     return hashlib.sha256(pin.encode()).hexdigest()
 
 
+def read_settings() -> dict:
+    path = os.path.join(DATA_DIR, "settings.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def write_settings(settings: dict):
+    path = os.path.join(DATA_DIR, "settings.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+def _create_notification(athlete_id: str, ntype: str, title: str, body: str, link: str = None):
+    db = read_json("notifications.json")
+    notif = {
+        "id": str(uuid.uuid4()),
+        "athlete_id": athlete_id,
+        "type": ntype,
+        "title": title,
+        "body": body,
+        "link": link,
+        "created_at": now_iso(),
+        "read": False,
+    }
+    db["data"].append(notif)
+    write_json("notifications.json", db)
+
+
 # ---------------------------------------------------------------------------
 # Decorators de autenticação
 # ---------------------------------------------------------------------------
@@ -855,6 +889,20 @@ def slots_mediate(round_id, cat, group_idx):
     official_slots[cat][group_idx]["resolved_by"] = "admin"
 
     write_json("rounds.json", rounds_db)
+
+    # Notify group about the confirmed slot
+    try:
+        _group_ids = rnd.get("groups", {}).get(cat, [[]])[group_idx] if group_idx < len(rnd.get("groups", {}).get(cat, [])) else []
+        for _aid in _group_ids:
+            _create_notification(
+                _aid, "slot_confirmed",
+                f"Horário confirmado — Rodada {rnd['round_number']}",
+                f"Horário oficial: {slot} (Cat {cat} G{group_idx+1}). Acesse o app.",
+                "#mesa/grupo"
+            )
+    except Exception:
+        pass
+
     athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
     return jsonify(_enrich_round(rnd, athletes_by_id))
 
@@ -1059,6 +1107,22 @@ def submit_result(round_id):
     results_db["data"].append(result_record)
     write_json("results.json", results_db)
 
+    # In-app notification to group members about the new result
+    try:
+        _athl_db = read_json("athletes.json")
+        _amap = {a["id"]: a for a in _athl_db["data"]}
+        _submitter = _display_name(_amap.get(submitted_by, {"nome": "Admin"})) if not is_admin else "Admin"
+        for _aid in group:
+            if _aid != athlete_id:
+                _create_notification(
+                    _aid, "result_submitted",
+                    f"Resultado lançado — Rodada {rnd['round_number']}",
+                    f"{_submitter} lançou o placar do Grupo {group_idx+1} Cat {cat}. Confirme no SuperRank.",
+                    "#mesa/resultado"
+                )
+    except Exception:
+        pass
+
     athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
     return jsonify(_enrich_result(result_record, athletes_by_id)), 201
 
@@ -1145,6 +1209,19 @@ def override_result(result_id):
         return jsonify({"error": "action deve ser 'confirm' ou 'edit'"}), 400
 
     write_json("results.json", results_db)
+
+    # Notify group about contest resolution
+    try:
+        for _aid in result.get("group", []):
+            _create_notification(
+                _aid, "contest_resolved",
+                f"Contestação resolvida",
+                f"O admin decidiu sobre o resultado (Cat {result.get('cat')} G{result.get('group_idx',0)+1}). Acesse o app.",
+                "#mesa/resultado"
+            )
+    except Exception:
+        pass
+
     athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
     return jsonify(_enrich_result(result, athletes_by_id))
 
@@ -1802,6 +1879,58 @@ def mesa_profile_pin():
         return jsonify({"error": "PIN atual incorreto"}), 400
     athlete["pin_hash"] = hash_pin(new_pin)
     write_json("athletes.json", athletes_db)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Config pública + Settings admin
+# ---------------------------------------------------------------------------
+
+@app.route("/api/config")
+def public_config():
+    s = read_settings()
+    return jsonify({"admin_whatsapp": s.get("admin_whatsapp", ""), "app_name": "SuperRank"})
+
+
+@app.route("/api/admin/settings", methods=["GET", "PUT"])
+@require_admin
+def admin_settings_route():
+    if request.method == "GET":
+        return jsonify(read_settings())
+    body = request.get_json(silent=True) or {}
+    s = read_settings()
+    if "admin_whatsapp" in body:
+        s["admin_whatsapp"] = str(body["admin_whatsapp"])
+    write_settings(s)
+    return jsonify(s)
+
+
+# ---------------------------------------------------------------------------
+# Notificações in-app (atleta)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/mesa/notifications")
+@require_atleta
+def mesa_notifications():
+    athlete_id = session["atleta_id"]
+    db = read_json("notifications.json")
+    mine = sorted(
+        [n for n in db["data"] if n["athlete_id"] == athlete_id],
+        key=lambda n: n["created_at"], reverse=True,
+    )[:50]
+    unread = sum(1 for n in mine if not n.get("read"))
+    return jsonify({"notifications": mine, "unread": unread})
+
+
+@app.route("/api/mesa/notifications/read", methods=["PUT"])
+@require_atleta
+def mark_notifications_read():
+    athlete_id = session["atleta_id"]
+    db = read_json("notifications.json")
+    for n in db["data"]:
+        if n["athlete_id"] == athlete_id:
+            n["read"] = True
+    write_json("notifications.json", db)
     return jsonify({"ok": True})
 
 

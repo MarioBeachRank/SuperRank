@@ -136,6 +136,97 @@ function waBtn(telefone) {
 }
 
 // ---------------------------------------------------------------------------
+// Messaging helpers — WhatsApp deep links + message modal
+// ---------------------------------------------------------------------------
+
+function buildWaUrl(phone, text) {
+  const digits = (phone || '').replace(/\D/g, '');
+  const number = digits.startsWith('55') ? digits : '55' + digits;
+  return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
+}
+
+function openMessageModal(title, recipientName, phone, defaultText) {
+  const digits = (phone || '').replace(/\D/g, '');
+  const number = digits.startsWith('55') ? digits : '55' + digits;
+  const hasPhone = number.length >= 10;
+
+  openModal(
+    title,
+    `<div>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px;">
+        Para: <strong>${escapeHtml(recipientName)}</strong>
+        ${hasPhone ? '' : ' <span style="color:#D94040;">(sem telefone cadastrado)</span>'}
+      </p>
+      <textarea id="msg-text" class="field-input msg-textarea" rows="9"
+        style="resize:vertical;font-family:inherit;">${escapeHtml(defaultText)}</textarea>
+    </div>`,
+    `${hasPhone ? `<a id="btn-abrir-wa" class="btn btn-primary" href="#" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="#fff" style="vertical-align:middle;margin-right:4px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M11.985 0C5.373 0 0 5.373 0 11.985c0 2.11.554 4.087 1.523 5.797L.057 23.886l6.236-1.637A11.947 11.947 0 0011.985 24C18.597 24 24 18.627 24 12.015 24 5.373 18.597 0 11.985 0zm0 21.818a9.826 9.826 0 01-5.012-1.372l-.36-.214-3.713.974.993-3.619-.235-.372a9.81 9.81 0 01-1.506-5.215c0-5.423 4.412-9.835 9.833-9.835 5.422 0 9.834 4.412 9.834 9.835S17.407 21.818 11.985 21.818z"/></svg>
+        Abrir WhatsApp</a>` : ''}
+     <button id="btn-copiar-msg" class="btn btn-ghost">Copiar texto</button>
+     <button id="btn-fechar-msg" class="btn btn-ghost">Fechar</button>`
+  );
+
+  function refreshUrl() {
+    const text = document.getElementById('msg-text')?.value || '';
+    const link = document.getElementById('btn-abrir-wa');
+    if (link) link.href = `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
+  }
+  document.getElementById('msg-text')?.addEventListener('input', refreshUrl);
+  refreshUrl();
+
+  document.getElementById('btn-copiar-msg')?.addEventListener('click', () => {
+    const text = document.getElementById('msg-text')?.value || '';
+    navigator.clipboard?.writeText(text).catch(() => {});
+    showToast('Mensagem copiada!', 'success');
+  });
+  document.getElementById('btn-fechar-msg')?.addEventListener('click', closeModal);
+}
+
+// Message templates — return pre-filled text for each scenario
+const MSG = {
+  // Atleta → grupo
+  agendarGrupo: (nome, cat, gi, roundNum, mySlots) => {
+    const slots = (mySlots || []).slice(0, 5).join('\n') || '(sem slots marcados ainda)';
+    return `Oi pessoal! 👋 Sou ${nome}, Cat ${cat} Grupo ${gi+1} Rodada ${roundNum} do SuperRank.\n\nPrecisamos marcar nossa partida. Meus horários disponíveis:\n${slots}\n\nQual funciona pra vocês? 🎾`;
+  },
+  confirmarHorario: (nome, cat, gi, roundNum, slot, location) =>
+    `Pessoal! ✅ Horário oficial do nosso grupo confirmado:\n📅 ${slot}\n📍 ${location || '—'}\n\nCat ${cat} · G${gi+1} · Rod ${roundNum}. Todos presentes! 🎾`,
+
+  pedirConfirmacaoResultado: (nome, cat, gi, roundNum) =>
+    `Oi pessoal! Lancei o resultado da Rodada ${roundNum} (Cat ${cat} G${gi+1}) no SuperRank. Por favor, confirmem o placar no app. 🎾`,
+
+  contatoDireto: (meuNome, coleganome, cat, gi, roundNum) =>
+    `Oi ${coleganome}! 🎾 Somos colegas de grupo no SuperRank — Cat ${cat} G${gi+1} Rod ${roundNum}. Tudo certo pra nossa partida?`,
+
+  cobrarSlots: (meuNome, coleganome, cat, gi, roundNum, deadline) =>
+    `Oi ${coleganome}! Já marcou seus horários no SuperRank? Somos do mesmo grupo (Cat ${cat} G${gi+1} Rod ${roundNum}). Prazo: ${deadline || '—'}. Entra no app e marca já! 🎾`,
+
+  // Atleta → Admin
+  pedirMediacao: (nome, cat, gi, roundNum) =>
+    `Olá! Sou ${nome}, Cat ${cat} Grupo ${gi+1} Rodada ${roundNum} do SuperRank. Solicito mediação de horário — nosso grupo não encontrou um horário em comum. Pode ajudar?`,
+
+  falarComAdmin: (nome, cat) =>
+    `Olá! Sou ${nome}, Cat ${cat} do SuperRank. Preciso de ajuda com: `,
+
+  // Admin → atleta
+  lembreteSlot: (atletaNome, roundNum, deadline) =>
+    `⚠️ Olá ${atletaNome}! Você ainda não marcou seus horários disponíveis da Rodada ${roundNum} no SuperRank. Prazo: ${deadline || '—'}. Acesse o app agora! 🎾`,
+
+  alertaWo: (atletaNome, roundNum, deadline) =>
+    `🚨 ${atletaNome}, atenção! Você está prestes a receber WO automático na Rodada ${roundNum} do SuperRank. Prazo para marcar slots: ${deadline || '—'}. Acesse urgente!`,
+
+  slotConfirmado: (atletaNome, cat, gi, roundNum, slot, location) =>
+    `✅ ${atletaNome}! Horário oficial da sua partida:\n📅 ${slot}\n📍 ${location || '—'}\nCat ${cat} · G${gi+1} · Rod ${roundNum}\nNão perca! 🎾`,
+
+  rodadaSorteada: (atletaNome, cat, gi, roundNum, deadline) =>
+    `🎯 ${atletaNome}! Rodada ${roundNum} do SuperRank sorteada. Você está no Grupo ${gi+1} da Cat ${cat}. Entre no app para ver seu grupo e marcar seus horários. Prazo: ${deadline || '—'}. 🎾`,
+
+  contestacaoResolvida: (atletaNome, cat, gi, roundNum) =>
+    `✅ ${atletaNome}, o admin resolveu a contestação do resultado da Rodada ${roundNum} (Cat ${cat} G${gi+1}). Acesse o SuperRank para ver o resultado final.`,
+};
+
+// ---------------------------------------------------------------------------
 // Modal genérico
 // ---------------------------------------------------------------------------
 
@@ -797,7 +888,42 @@ async function renderAdminDashboard(content) {
 
 async function renderAdminAtletas(content) {
   state.athletes = await api('/api/athletes');
+
+  // Settings card — admin WhatsApp
+  let settings = {};
+  try { settings = await api('/api/admin/settings'); } catch (_) {}
+
+  const settingsCard = `
+    <div class="card" style="margin-bottom:16px;">
+      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+         color:var(--color-text-muted);margin-bottom:10px;">⚙️ Configurações</p>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <div style="flex:1;min-width:200px;">
+          <label class="field-label" style="font-size:11px;">WhatsApp do Admin (com DDI, ex: 5575999998888)</label>
+          <input id="input-admin-wa" class="field-input" type="tel" inputmode="numeric"
+            placeholder="5575999998888" value="${escapeHtml(settings.admin_whatsapp || '')}" />
+        </div>
+        <button id="btn-save-admin-wa" class="btn btn-primary btn-sm">Salvar</button>
+      </div>
+      <p id="admin-wa-msg" class="hidden" style="font-size:12px;margin-top:6px;"></p>
+    </div>`;
+
+  // Inject settings card before the athlete table
+  const tmpDiv = document.createElement('div');
+  tmpDiv.innerHTML = settingsCard;
   paintAtletasTable(content);
+  content.insertBefore(tmpDiv.firstElementChild, content.firstElementChild);
+
+  content.querySelector('#btn-save-admin-wa')?.addEventListener('click', async () => {
+    const msgEl = content.querySelector('#admin-wa-msg');
+    const val = content.querySelector('#input-admin-wa').value.replace(/\D/g, '');
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body: { admin_whatsapp: val } });
+      msgEl.textContent = '✓ Salvo!'; msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
+    } catch (err) {
+      msgEl.textContent = `Erro: ${err.message}`; msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden');
+    }
+  });
 }
 
 function paintAtletasTable(content) {
@@ -1796,6 +1922,21 @@ async function renderAdminRodada(content) {
         chevron.classList.toggle('open');
         if (body.classList.contains('open')) {
           initCatTabs(body);
+
+          // Admin messaging buttons
+          body.querySelectorAll('.btn-adm-lembrete').forEach(btn => {
+            btn.addEventListener('click', () => {
+              openMessageModal('Lembrete Slot', btn.dataset.nome, btn.dataset.phone,
+                MSG.lembreteSlot(btn.dataset.nome, btn.dataset.round, btn.dataset.deadline));
+            });
+          });
+          body.querySelectorAll('.btn-adm-wo').forEach(btn => {
+            btn.addEventListener('click', () => {
+              openMessageModal('Alerta WO', btn.dataset.nome, btn.dataset.phone,
+                MSG.alertaWo(btn.dataset.nome, btn.dataset.round, btn.dataset.deadline));
+            });
+          });
+
           // Load result statuses for this round and annotate group cards
           const roundId = header.closest('.round-card').dataset.roundId;
           if (roundId) {
@@ -1912,8 +2053,19 @@ function renderGroupsGrid(cat, round) {
             </div>
             <div class="group-athletes">
               ${names.map((n, i) => `
-                <span class="group-athlete-chip" style="display:inline-flex;align-items:center;gap:6px;">
-                  ${escapeHtml(n)}${telefones[i] ? waBtn(telefones[i]) : ''}
+                <span class="group-athlete-chip" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  ${escapeHtml(n)}
+                  ${telefones[i] ? `
+                    ${waBtn(telefones[i])}
+                    <button class="btn btn-sm btn-ghost btn-adm-lembrete"
+                      data-nome="${escapeHtml(n)}" data-phone="${escapeHtml(telefones[i])}"
+                      data-round="${round.round_number}" data-deadline="${escapeHtml(round.deadline_slots||'')}"
+                      style="font-size:10px;padding:2px 6px;">⏰ Lembrete</button>
+                    <button class="btn btn-sm btn-ghost btn-adm-wo"
+                      data-nome="${escapeHtml(n)}" data-phone="${escapeHtml(telefones[i])}"
+                      data-round="${round.round_number}" data-deadline="${escapeHtml(round.deadline_slots||'')}"
+                      style="font-size:10px;padding:2px 6px;color:#D94040;">🚨 WO Alert</button>
+                  ` : ''}
                 </span>`).join('')}
             </div>
             <div class="group-sets">
@@ -1972,16 +2124,27 @@ async function renderMesa(sub) {
   try { ctx = await api('/api/mesa/context'); } catch (_) {}
 
   switch (sub || 'home') {
-    case 'home':      await renderMesaHome(content, ctx); break;
-    case 'slots':     renderMesaSlots(content, ctx); break;
-    case 'grupo':     renderMesaGrupo(content, ctx); break;
-    case 'resultado': renderMesaResultado(content, ctx); break;
-    case 'historico': await renderMesaHistorico(content); break;
-    case 'perfil':    await renderMesaPerfil(content); break;
-    case 'ranking':   await renderMesaRanking(content, ctx); break;
+    case 'home':           await renderMesaHome(content, ctx); break;
+    case 'slots':          renderMesaSlots(content, ctx); break;
+    case 'grupo':          await renderMesaGrupo(content, ctx); break;
+    case 'resultado':      renderMesaResultado(content, ctx); break;
+    case 'historico':      await renderMesaHistorico(content); break;
+    case 'perfil':         await renderMesaPerfil(content); break;
+    case 'ranking':        await renderMesaRanking(content, ctx); break;
+    case 'notificacoes':   await renderMesaNotificacoes(content); break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela disponível em sprint futuro.</p>`;
   }
+
+  // Update notification badge
+  try {
+    const nd = await api('/api/mesa/notifications');
+    const badge = document.getElementById('notif-badge');
+    if (badge) {
+      badge.textContent = nd.unread > 0 ? String(nd.unread) : '';
+      badge.style.display = nd.unread > 0 ? 'flex' : 'none';
+    }
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -2295,6 +2458,65 @@ async function renderMesaRanking(content, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Mesa: Notificações
+// ---------------------------------------------------------------------------
+
+async function renderMesaNotificacoes(content) {
+  content.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando notificações…</p>`;
+
+  let data = { notifications: [], unread: 0 };
+  try {
+    data = await api('/api/mesa/notifications');
+    await api('/api/mesa/notifications/read', { method: 'PUT' });
+    // Clear badge
+    const badge = document.getElementById('notif-badge');
+    if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
+  } catch (_) {}
+
+  const { notifications } = data;
+  const ICONS = {
+    result_submitted: '📋',
+    slot_confirmed: '📅',
+    contest_resolved: '⚖️',
+    wo_applied: '🚨',
+    round_drawn: '🎯',
+    deadline_reminder: '⏰',
+  };
+
+  const header = `
+    <div class="section-header">
+      <h1 class="section-title">Notificações</h1>
+    </div>`;
+
+  if (!notifications.length) {
+    content.innerHTML = header + `
+      <div style="text-align:center;padding:48px 20px;">
+        <div style="font-size:40px;margin-bottom:12px;">🔔</div>
+        <p style="color:var(--color-text-muted);">Nenhuma notificação ainda.</p>
+      </div>`;
+    return;
+  }
+
+  const items = notifications.map(n => {
+    const icon = ICONS[n.type] || '🔔';
+    const date = n.created_at ? new Date(n.created_at + 'Z').toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+    const isUnread = !n.read;
+    return `
+      <div class="notif-item${isUnread ? ' unread' : ''}"${n.link ? ` onclick="location.hash='${n.link}'" style="cursor:pointer;"` : ''}>
+        <span class="notif-icon">${icon}</span>
+        <div class="notif-body">
+          <p class="notif-title">${escapeHtml(n.title)}</p>
+          <p class="notif-text">${escapeHtml(n.body)}</p>
+          <p class="notif-date">${date}</p>
+        </div>
+        ${isUnread ? '<span class="notif-dot"></span>' : ''}
+      </div>`;
+  }).join('');
+
+  content.innerHTML = header + `<div class="notif-list">${items}</div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Mesa: Marcar Slots (Art. 26 + Art. 28)
 // ---------------------------------------------------------------------------
 
@@ -2585,7 +2807,7 @@ function renderMesaSlots(content, ctx) {
 // Mesa: Meu Grupo
 // ---------------------------------------------------------------------------
 
-function renderMesaGrupo(content, ctx) {
+async function renderMesaGrupo(content, ctx) {
   if (!ctx || !ctx.group) {
     content.innerHTML = `
       <div class="empty-state" style="padding:40px 20px;">
@@ -2654,7 +2876,80 @@ function renderMesaGrupo(content, ctx) {
             <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
           </div>`).join('')}
       </div>
+
+      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--color-text-muted);margin:20px 0 8px;">Mensagens Rápidas</p>
+      <div class="quick-msg-grid" id="quick-msg-btns"></div>
     </div>`;
+
+  // Quick message buttons (populated after innerHTML is set since we need admin phone)
+  const msgGrid = content.querySelector('#quick-msg-btns');
+  if (msgGrid) {
+    const myName = ctx.athlete.apelido || ctx.athlete.nome;
+    const mySlots = ctx.my_slots || [];
+    const deadline = round?.deadline_slots ? new Date(round.deadline_slots).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '—';
+    const slotStr = official_slot?.slot || '—';
+    const loc = group.location || '—';
+    const gi = group.group_index;
+    const cat = group.category;
+    const roundNum = round?.round_number || '—';
+
+    // Fetch admin phone
+    let adminPhone = '';
+    try { const cfg = await api('/api/config'); adminPhone = cfg.admin_whatsapp || ''; } catch (_) {}
+
+    // Build buttons list
+    const btns = [];
+
+    // "Agendar partida" — open modal to message all group members individually
+    btns.push({ label: '📅 Agendar partida', action: () => {
+      const others = slotsStatus.filter(s => s.athlete_id !== athlete.id && s.telefone);
+      if (!others.length) { showToast('Nenhum colega com telefone cadastrado.', 'warning'); return; }
+      const first = others[0];
+      openMessageModal(
+        'Agendar Partida',
+        first.nome,
+        first.telefone,
+        MSG.agendarGrupo(myName, cat, gi, roundNum, mySlots)
+      );
+    }});
+
+    if (slotResolved) {
+      btns.push({ label: '✅ Confirmar horário', action: () => {
+        const others = slotsStatus.filter(s => s.athlete_id !== athlete.id && s.telefone);
+        if (!others.length) { showToast('Nenhum colega com telefone.', 'warning'); return; }
+        openMessageModal('Confirmar Horário', others[0].nome, others[0].telefone,
+          MSG.confirmarHorario(myName, cat, gi, roundNum, slotStr, loc));
+      }});
+    }
+
+    // "Cobrar slots" for teammates without slots
+    const semSlots = slotsStatus.filter(s => s.athlete_id !== athlete.id && !s.has_slots && s.telefone);
+    if (semSlots.length) {
+      btns.push({ label: '⏰ Cobrar slots dos colegas', action: () => {
+        openMessageModal('Cobrar Slots', semSlots[0].nome, semSlots[0].telefone,
+          MSG.cobrarSlots(myName, semSlots[0].nome, cat, gi, roundNum, deadline));
+      }});
+    }
+
+    if (adminPhone) {
+      btns.push({ label: '🆘 Pedir mediação ao admin', action: () => {
+        openMessageModal('Pedir Mediação', 'Admin', adminPhone,
+          MSG.pedirMediacao(myName, cat, gi, roundNum));
+      }});
+      btns.push({ label: '💬 Falar com admin', action: () => {
+        openMessageModal('Falar com Admin', 'Admin', adminPhone,
+          MSG.falarComAdmin(myName, cat));
+      }});
+    }
+
+    msgGrid.innerHTML = btns.map((b, i) =>
+      `<button class="quick-msg-btn" data-idx="${i}">${b.label}</button>`
+    ).join('');
+    msgGrid.querySelectorAll('.quick-msg-btn').forEach(btn => {
+      btn.addEventListener('click', () => btns[parseInt(btn.dataset.idx)].action());
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -2228,3 +2228,115 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   font-size: 12px;
   font-weight: 500;
 }
+
+/* =====================================================================
+   Notification bell (mesa header)
+   ===================================================================== */
+
+.btn-notif-bell {
+  position: relative;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+.btn-notif-bell:hover { color: var(--color-primary); }
+
+.notif-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 800;
+  min-width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+/* =====================================================================
+   Notification list (mesa notificacoes screen)
+   ===================================================================== */
+
+.notif-list { padding-bottom: var(--space-lg); }
+
+.notif-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px var(--space-md);
+  border-bottom: var(--border);
+  background: var(--color-surface);
+  transition: background 0.12s;
+}
+.notif-item:first-child { border-top: var(--border); }
+.notif-item.unread { background: rgba(255,107,53,0.06); }
+.notif-item:hover { background: var(--color-surface-2); }
+
+.notif-icon { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
+
+.notif-body { flex: 1; min-width: 0; }
+.notif-title { font-size: 13px; font-weight: 700; color: var(--color-text); margin-bottom: 3px; }
+.notif-text  { font-size: 12px; color: var(--color-text-muted); line-height: 1.4; margin-bottom: 4px; }
+.notif-date  { font-size: 11px; color: var(--color-text-muted); opacity: 0.7; }
+
+.notif-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+/* =====================================================================
+   Message modal textarea
+   ===================================================================== */
+
+.msg-textarea {
+  width: 100%;
+  min-height: 180px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* =====================================================================
+   Quick message buttons (mesa grupo)
+   ===================================================================== */
+
+.quick-msg-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: var(--space-md);
+}
+
+.quick-msg-btn {
+  width: 100%;
+  text-align: left;
+  padding: 12px var(--space-md);
+  background: var(--color-surface);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.quick-msg-btn:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-primary);
+}
