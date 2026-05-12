@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import hashlib
@@ -179,6 +180,10 @@ def athletes_create():
     if any(a["nome"].lower() == nome.lower() for a in db["data"]):
         return jsonify({"error": "Já existe um atleta com este nome"}), 409
 
+    telefone = re.sub(r'\D', '', str(body.get("telefone") or ""))
+    if telefone and not (10 <= len(telefone) <= 15):
+        return jsonify({"error": "Telefone inválido (10-15 dígitos com código do país)"}), 400
+
     atleta = {
         "id": str(uuid.uuid4()),
         "nome": nome,
@@ -188,6 +193,7 @@ def athletes_create():
         "desired_category": desired,
         "admin_confirmed": bool(admin_cat),
         "status": "ativo",
+        "telefone": telefone or None,
         "created_at": now_iso(),
         "category_history": [],
     }
@@ -245,6 +251,12 @@ def athletes_update(athlete_id):
         if desired is not None and desired not in ("B", "C", "D"):
             return jsonify({"error": "Categoria desejada inválida (A proibida para auto-declaração)"}), 400
         atleta["desired_category"] = desired
+
+    if "telefone" in body:
+        telefone = re.sub(r'\D', '', str(body["telefone"] or ""))
+        if telefone and not (10 <= len(telefone) <= 15):
+            return jsonify({"error": "Telefone inválido (10-15 dígitos com código do país)"}), 400
+        atleta["telefone"] = telefone or None
 
     write_json("athletes.json", db)
     safe = {k: v for k, v in atleta.items() if k != "pin_hash"}
@@ -438,6 +450,14 @@ def _enrich_round(rnd: dict, athletes_by_id: dict) -> dict:
     enriched["groups_named"] = {
         cat: [
             [athletes_by_id.get(aid, {}).get("nome", aid) for aid in group]
+            for group in groups
+        ]
+        for cat, groups in rnd.get("groups", {}).items()
+    }
+
+    enriched["groups_telefones"] = {
+        cat: [
+            [athletes_by_id.get(aid, {}).get("telefone") for aid in group]
             for group in groups
         ]
         for cat, groups in rnd.get("groups", {}).items()
@@ -1187,6 +1207,7 @@ def mesa_context():
                 "athlete_id": aid,
                 "nome": athletes_by_id.get(aid, {}).get("nome", aid),
                 "has_slots": bool(slot_record and slot_record.get("slots")),
+                "telefone": athletes_by_id.get(aid, {}).get("telefone"),
             })
 
     return jsonify({

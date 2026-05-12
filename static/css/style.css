@@ -1661,3 +1661,55 @@ select.field-input {
 
 input[type="checkbox"] { accent-color: var(--color-primary); }
 input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
+
+/* =====================================================================
+   Phone input group
+   ===================================================================== */
+
+.phone-input-group {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.phone-country-select {
+  flex: 0 0 auto;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: 0 6px;
+  cursor: pointer;
+  height: 38px;
+}
+
+.phone-country-select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.phone-number-input {
+  flex: 1 1 0;
+}
+
+/* WhatsApp button */
+.btn-wa {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: #25D366;
+  color: #fff;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.btn-wa:hover { background: #1ebe5d; }
+.btn-wa svg { width: 14px; height: 14px; fill: #fff; flex-shrink: 0; }
