@@ -362,6 +362,10 @@ function renderLogin() {
     }
   });
 
+  // Aplica máscara no campo de telefone do login
+  const loginPhoneEl = app.querySelector('#form-login-atleta input[name="phone_local"]');
+  if (loginPhoneEl) applyPhoneMask(loginPhoneEl);
+
   // Login atleta
   app.querySelector('#form-login-atleta').addEventListener('submit', async e => {
     e.preventDefault();
@@ -369,14 +373,16 @@ function renderLogin() {
     btn.disabled = true;
     btn.textContent = 'Entrando…';
     try {
+      const countryCode = e.target.phone_country.value;
+      const localNumber = e.target.phone_local.value.replace(/\D/g, '');
+      const telefone = countryCode + localNumber;
       const data = await api('/api/auth/atleta', {
         method: 'POST',
-        body: { nome: e.target.nome.value.trim(), pin: e.target.pin.value },
+        body: { telefone, pin: e.target.pin.value },
       });
       state.atleta = data.atleta;
       location.hash = '#mesa/home';
     } catch (err) {
-      // Mostra erro inline
       let errEl = app.querySelector('#login-atleta-error');
       if (!errEl) {
         errEl = document.createElement('p');
@@ -786,7 +792,6 @@ async function renderAdminAtletas(content) {
 function paintAtletasTable(content) {
   const athletes = state.athletes;
   const isMobile = window.innerWidth < 640;
-  const _dbgW = window.innerWidth; // DEBUG — remover após confirmar
 
   const tableBlock = isMobile ? `
     <div id="atletas-list">
@@ -810,7 +815,7 @@ function paintAtletasTable(content) {
     <div class="section-header">
       <div>
         <h1 class="section-title">Gestão de Atletas</h1>
-        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s) · largura: ${_dbgW}px</p>
+        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s)</p>
       </div>
       <button id="btn-novo-atleta" class="btn btn-primary">+ Novo Atleta</button>
     </div>

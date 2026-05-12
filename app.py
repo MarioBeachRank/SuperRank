@@ -96,21 +96,23 @@ def auth_admin():
 @app.route("/api/auth/atleta", methods=["POST"])
 def auth_atleta():
     body = request.get_json(silent=True) or {}
-    nome = (body.get("nome") or "").strip()
+    telefone = re.sub(r'\D', '', str(body.get("telefone") or ""))
     pin = (body.get("pin") or "").strip()
 
-    if not nome or not pin:
-        return jsonify({"error": "Nome e PIN são obrigatórios"}), 400
+    if not telefone or not pin:
+        return jsonify({"error": "Telefone e PIN são obrigatórios"}), 400
 
     db = read_json("athletes.json")
     ph = hash_pin(pin)
     atleta = next(
         (a for a in db["data"]
-         if a["nome"].lower() == nome.lower() and a["pin_hash"] == ph and a["status"] == "ativo"),
+         if re.sub(r'\D', '', str(a.get("telefone") or "")) == telefone
+         and a["pin_hash"] == ph
+         and a["status"] == "ativo"),
         None,
     )
     if not atleta:
-        return jsonify({"error": "Nome ou PIN inválidos"}), 401
+        return jsonify({"error": "Telefone ou PIN inválidos"}), 401
 
     session["atleta_id"] = atleta["id"]
     session["atleta_nome"] = atleta["nome"]
