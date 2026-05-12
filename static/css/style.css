@@ -1416,9 +1416,11 @@ select.field-input {
   }
 
   /* Tabelas scrollam horizontalmente sem alargar a página */
-  .admin-main .card { overflow-x: auto; }
-  .data-table thead th { white-space: nowrap; }
+  .admin-main .card { overflow-x: auto !important; }
   .section-header { flex-wrap: wrap; gap: 8px; }
+  .search-input { min-width: 0; width: 100%; }
+  .filter-bar { flex-direction: column; }
+  .filter-bar select { width: 100% !important; min-width: 0 !important; }
 
   .admin-bottom-nav { display: flex; }
 
