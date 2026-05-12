@@ -910,10 +910,14 @@ function openAtletaModal(atleta = null) {
     const body = {
       nome: fd.get('nome').trim(),
       type: fd.get('type'),
-      admin_category: fd.get('admin_category') || null,
     };
+    if (isEdit) {
+      body.current_category = fd.get('admin_category') || null;
+      body.status = fd.get('status');
+    } else {
+      body.admin_category = fd.get('admin_category') || null;
+    }
     if (pin) body.pin = pin;
-    if (isEdit) body.status = fd.get('status');
 
     if (!isEdit) {
       if (pin && !/^\d{4}$/.test(pin)) {
