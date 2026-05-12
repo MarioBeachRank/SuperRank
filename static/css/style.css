@@ -1110,6 +1110,71 @@ select.field-input {
 }
 
 /* =====================================================================
+   Calendar Strip (Slot Wizard)
+   ===================================================================== */
+
+.cal-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.cal-day {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  position: relative;
+  min-width: 52px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.cal-day-abbr { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.cal-day-date { font-size: 12px; font-weight: 500; }
+
+.cal-day.weekend { border-color: rgba(204,93,232,0.35); color: var(--color-cat-d); }
+.cal-day.has-slots { border-color: var(--color-cat-c); }
+.cal-day.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.cal-day.active.weekend { background: var(--color-cat-d); border-color: var(--color-cat-d); }
+.cal-day:hover:not(.active) { border-color: var(--color-primary); color: var(--color-text); }
+
+.cal-day-count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--color-cat-c);
+  color: #fff;
+  border-radius: 99px;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  line-height: 1.2;
+}
+.cal-day.active .cal-day-count { background: rgba(255,255,255,0.3); }
+
+.batch-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* =====================================================================
    Meu Grupo (Mesa)
    ===================================================================== */
 

@@ -1348,6 +1348,7 @@ async function renderAdminTemporadas(content) {
               <th>Status</th>
               <th>Período</th>
               <th>Rodadas</th>
+              <th>Dias/Rodada</th>
               <th></th>
             </tr>
           </thead>
@@ -1359,6 +1360,7 @@ async function renderAdminTemporadas(content) {
                 <td>${seasonStatusBadge(s.status)}</td>
                 <td style="font-size:12px;">${s.start_date} → ${s.end_date}</td>
                 <td>${s.rounds_total}</td>
+                <td>${s.round_duration_days || 10}</td>
                 <td style="text-align:right;white-space:nowrap;">
                   ${s.status === 'pending'
                     ? `<button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#D94040;">Excluir</button>`
@@ -1414,8 +1416,12 @@ function renderAdminTemporadaNova(content) {
           <input type="number" name="year" class="field-input" value="${new Date().getFullYear()}" min="2020" required />
         </div>
         <div class="form-group">
-          <label class="field-label">Rodadas (padrão: 4)</label>
-          <input type="number" name="rounds_total" class="field-input" value="4" min="1" max="12" required />
+          <label class="field-label">Rodadas (2–5, padrão: 4)</label>
+          <input type="number" name="rounds_total" class="field-input" value="4" min="2" max="5" required />
+        </div>
+        <div class="form-group">
+          <label class="field-label">Dias por rodada (padrão: 10)</label>
+          <input type="number" name="round_duration_days" class="field-input" value="10" min="1" max="60" required />
         </div>
         <div class="form-group">
           <label class="field-label">Data de início</label>
@@ -1459,6 +1465,7 @@ function renderAdminTemporadaNova(content) {
       name: fd.get('name').trim(),
       year: parseInt(fd.get('year')),
       rounds_total: parseInt(fd.get('rounds_total')),
+      round_duration_days: parseInt(fd.get('round_duration_days')),
       start_date: fd.get('start_date'),
       end_date: fd.get('end_date'),
       location: fd.get('location').trim(),
@@ -1582,6 +1589,23 @@ async function renderAdminMediacao(content) {
   });
 }
 
+function _mediationSlots(startDate, endDate) {
+  const MORNING = ["06:00","06:30","07:00","07:30"];
+  const AFTERNOON = ["16:30","17:00","17:30","18:00","18:30","19:00","19:30","20:00","20:30"];
+  const WEEKEND = ["07:00","07:30","08:00","08:30","09:00","09:30"];
+  const result = [];
+  let cur = new Date(startDate + 'T12:00:00');
+  const end = new Date(endDate + 'T12:00:00');
+  while (cur <= end) {
+    const dateStr = cur.toISOString().slice(0, 10);
+    const dow = cur.getDay();
+    const times = (dow === 0 || dow === 6) ? WEEKEND : [...MORNING, ...AFTERNOON];
+    times.forEach(t => result.push(`${dateStr} ${t}`));
+    cur = new Date(cur.getTime() + 86400000);
+  }
+  return result;
+}
+
 function renderMediationCard(pg, athletesById) {
   const { round, cat, groupIdx, slotInfo } = pg;
   const group = round.groups?.[cat]?.[groupIdx] || [];
@@ -1626,11 +1650,18 @@ function renderMediationCard(pg, athletesById) {
 
       <div class="mediation-form">
         <span style="font-size:13px;font-weight:600;color:var(--color-text-muted);">Definir horário manualmente:</span>
-        <select id="mediation-input-${round.id}-${cat}-${groupIdx}" class="field-input" style="width:auto;min-width:100px;">
-          ${['06:00','06:30','07:00','07:30','08:00','08:30','09:00','09:30',
-             '16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30'].map(s =>
-            `<option value="${s}">${s}</option>`).join('')}
-        </select>
+        ${round.start_date && round.end_date
+          ? (() => {
+              const allSlots = _mediationSlots(round.start_date, round.end_date);
+              return `<select id="mediation-input-${round.id}-${cat}-${groupIdx}" class="field-input" style="width:auto;min-width:180px;">
+                ${allSlots.map(s => `<option value="${s}">${s}</option>`).join('')}
+              </select>`;
+            })()
+          : `<select id="mediation-input-${round.id}-${cat}-${groupIdx}" class="field-input" style="width:auto;min-width:100px;">
+              ${['06:00','06:30','07:00','07:30','08:00','08:30','09:00','09:30',
+                 '16:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30'].map(s =>
+                `<option value="${s}">${s}</option>`).join('')}
+            </select>`}
         <button class="btn btn-primary btn-mediar"
           data-round-id="${round.id}" data-cat="${cat}" data-group-idx="${groupIdx}">
           Confirmar
@@ -1733,6 +1764,22 @@ async function renderAdminRodada(content) {
     // Refresh button
     content.querySelector('#btn-refresh-rodada')?.addEventListener('click', () => loadAndPaint(season));
 
+    // Authorize-draw buttons
+    content.querySelectorAll('.btn-authorize-draw').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const roundId = btn.dataset.roundId;
+        if (!confirm('Autorizar sorteio da próxima rodada agora (antes do dia final)?')) return;
+        btn.disabled = true; btn.textContent = 'Autorizando…';
+        try {
+          await api(`/api/rounds/${roundId}/authorize-draw`, { method: 'POST', body: {} });
+          await loadAndPaint(season);
+        } catch (err) {
+          showToast(`Erro: ${err.message}`, 'error');
+          btn.disabled = false; btn.textContent = '✓ Autorizar Sorteio da Próxima Rodada';
+        }
+      });
+    });
+
     // Acordeon dos rounds
     content.querySelectorAll('.round-card-header').forEach(header => {
       header.addEventListener('click', async () => {
@@ -1781,6 +1828,20 @@ function renderRoundCard(round, season) {
   const cats = Object.keys(round.groups || {});
   const totalGroups = cats.reduce((acc, cat) => acc + (round.groups[cat] || []).length, 0);
 
+  const dateLine = round.start_date && round.end_date
+    ? `${round.start_date} → ${round.end_date}`
+    : '';
+
+  let deadlineFmt = '';
+  if (round.deadline_slots) {
+    try {
+      const dl = new Date(round.deadline_slots);
+      deadlineFmt = dl.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' });
+    } catch(_) { deadlineFmt = round.deadline_slots; }
+  }
+
+  const canAuthorize = round.status !== 'closed' && round.status !== 'cancelled' && !round.draw_authorized;
+
   return `
     <div class="round-card" data-round-id="${round.id}">
       <div class="round-card-header">
@@ -1790,6 +1851,12 @@ function renderRoundCard(round, season) {
         <span class="round-card-chevron">▼</span>
       </div>
       <div class="round-card-body">
+        ${dateLine || deadlineFmt ? `
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px;font-size:12px;">
+            ${dateLine ? `<span>📅 <strong>Período:</strong> ${dateLine}</span>` : ''}
+            ${deadlineFmt ? `<span style="color:#BA7517;">⏰ <strong>Prazo slots:</strong> ${deadlineFmt}</span>` : ''}
+            ${round.draw_authorized ? `<span class="badge badge-active">Sorteio autorizado</span>` : ''}
+          </div>` : ''}
         ${round.cancelled_categories && round.cancelled_categories.length
           ? `<div class="alert alert-warning" style="margin-bottom:12px;">
               ⚠ Cat ${round.cancelled_categories.join(', ')} sem número válido de atletas (Art. 14) — rodada cancelada para essa(s) categoria(s).
@@ -1807,6 +1874,12 @@ function renderRoundCard(round, season) {
               <div class="cat-tab-content ${i === 0 ? 'active' : ''}" data-cat-content="${cat}">
                 ${renderGroupsGrid(cat, round)}
               </div>`).join('')}`}
+        ${canAuthorize ? `
+          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
+            <button class="btn btn-ghost btn-sm btn-authorize-draw" data-round-id="${round.id}">
+              ✓ Autorizar Sorteio da Próxima Rodada
+            </button>
+          </div>` : ''}
       </div>
     </div>`;
 }
@@ -2080,103 +2153,230 @@ function renderMesaSlots(content, ctx) {
   }
 
   const { round, my_slots = [], eligible_slots: eligible = [] } = ctx;
-  let selected = new Set(my_slots);
 
-  // Divide em manhã e tarde para dias úteis
-  const MORNING = ["06:00","06:30","07:00","07:30"];
-  const isWeekend = eligible.includes("08:00") && !eligible.includes("06:00");
+  // New format: "YYYY-MM-DD HH:MM"; old: "HH:MM"
+  const isNewFmt = eligible.length > 0 && eligible[0].includes('-');
 
-  function renderSlotBtn(slot) {
-    const isSel = selected.has(slot);
-    return `<button class="slot-btn${isSel ? ' selected' : ''}" data-slot="${slot}">${slot}</button>`;
-  }
-
-  function buildGrid() {
-    if (isWeekend) {
-      return `
-        <p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p>
-        <div class="slots-row">${eligible.map(renderSlotBtn).join('')}</div>`;
+  if (!isNewFmt) {
+    // Legacy simple UI (rounds created before the overhaul)
+    let selected = new Set(my_slots);
+    const MORNING = ["06:00","06:30","07:00","07:30"];
+    const isWeekend = eligible.includes("08:00") && !eligible.includes("06:00");
+    function renderSlotBtn(slot) {
+      return `<button class="slot-btn${selected.has(slot) ? ' selected' : ''}" data-slot="${slot}">${slot}</button>`;
     }
-    const morning = eligible.filter(s => MORNING.includes(s));
-    const afternoon = eligible.filter(s => !MORNING.includes(s));
-    return `
-      <p class="slots-period-label">Manhã (06:00–08:00)</p>
-      <div class="slots-row">${morning.map(renderSlotBtn).join('')}</div>
-      <p class="slots-period-label">Tarde/Noite (16:30–21:00)</p>
-      <div class="slots-row">${afternoon.map(renderSlotBtn).join('')}</div>`;
-  }
-
-  content.innerHTML = `
-    <div class="slots-screen">
-      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Marcar Slots</h2>
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
-        Rodada ${round.round_number} ${round.target_date ? '· ' + round.target_date : ''}
-      </p>
-
-      ${round.deadline_slots ? `
-        <div class="deadline-bar">
-          ⏰ Prazo: <strong>${round.deadline_slots}</strong> · Art. 26: sem slot = WO automático
-        </div>` : ''}
-
-      <p class="slots-summary" id="slots-summary">
-        ${selected.size} slot${selected.size !== 1 ? 's' : ''} selecionado${selected.size !== 1 ? 's' : ''}
-      </p>
-
+    function buildGrid() {
+      if (isWeekend) return `<p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p><div class="slots-row">${eligible.map(renderSlotBtn).join('')}</div>`;
+      return `<p class="slots-period-label">Manhã (06:00–08:00)</p><div class="slots-row">${eligible.filter(s=>MORNING.includes(s)).map(renderSlotBtn).join('')}</div>
+              <p class="slots-period-label">Tarde/Noite (16:30–21:00)</p><div class="slots-row">${eligible.filter(s=>!MORNING.includes(s)).map(renderSlotBtn).join('')}</div>`;
+    }
+    content.innerHTML = `<div class="slots-screen"><h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Marcar Slots</h2>
+      <p class="slots-summary" id="slots-summary">${selected.size} slot${selected.size!==1?'s':''} selecionado${selected.size!==1?'s':''}</p>
       <div id="slots-grid">${buildGrid()}</div>
-
       <div style="display:flex;gap:12px;margin-top:20px;">
         <button id="btn-limpar" class="btn btn-ghost">Limpar tudo</button>
         <button id="btn-salvar-slots" class="btn btn-primary">Salvar slots</button>
-      </div>
-      <p id="slots-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
-    </div>`;
-
-  function refreshGrid() {
-    content.querySelector('#slots-grid').innerHTML = buildGrid();
-    content.querySelector('#slots-summary').textContent =
-      `${selected.size} slot${selected.size !== 1 ? 's' : ''} selecionado${selected.size !== 1 ? 's' : ''}`;
-    attachSlotClicks();
+      </div><p id="slots-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p></div>`;
+    function refreshLegacy() {
+      content.querySelector('#slots-grid').innerHTML = buildGrid();
+      content.querySelector('#slots-summary').textContent = `${selected.size} slot${selected.size!==1?'s':''} selecionado${selected.size!==1?'s':''}`;
+      content.querySelectorAll('.slot-btn').forEach(b => b.addEventListener('click', () => { const s=b.dataset.slot; selected.has(s)?selected.delete(s):selected.add(s); refreshLegacy(); }));
+    }
+    refreshLegacy();
+    content.querySelector('#btn-limpar').addEventListener('click', () => { selected.clear(); refreshLegacy(); });
+    content.querySelector('#btn-salvar-slots').addEventListener('click', async () => {
+      const msgEl = content.querySelector('#slots-msg');
+      const btn = content.querySelector('#btn-salvar-slots');
+      btn.disabled = true; btn.textContent = 'Salvando…';
+      try {
+        await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
+        msgEl.textContent = '✓ Slots salvos!'; msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
+      } catch (err) { msgEl.textContent = `Erro: ${err.message}`; msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden'); }
+      finally { btn.disabled = false; btn.textContent = 'Salvar slots'; }
+    });
+    return;
   }
 
-  function attachSlotClicks() {
-    content.querySelectorAll('.slot-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const slot = btn.dataset.slot;
-        if (selected.has(slot)) selected.delete(slot); else selected.add(slot);
-        refreshGrid();
-      });
+  // ── New calendar-strip UI ──────────────────────────────────────────────────
+
+  const MORNING = ["06:00","06:30","07:00","07:30"];
+  const DAY_ABBR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+  // Group eligible slots by date
+  const byDate = {};
+  for (const slot of eligible) {
+    const [date, time] = slot.split(' ');
+    if (!byDate[date]) byDate[date] = [];
+    byDate[date].push(time);
+  }
+  const dates = Object.keys(byDate).sort();
+
+  function isWeekday(dateStr) {
+    const dow = new Date(dateStr + 'T12:00:00').getDay();
+    return dow >= 1 && dow <= 5;
+  }
+
+  let selected = new Set(my_slots.filter(s => s.includes('-')));
+  let activeDate = dates[0] || null;
+
+  function countByDate(date) {
+    return (byDate[date] || []).filter(t => selected.has(`${date} ${t}`)).length;
+  }
+
+  function getTimesForDate(date) {
+    return (byDate[date] || []).filter(t => selected.has(`${date} ${t}`));
+  }
+
+  function fmtDeadline(dl) {
+    if (!dl) return '';
+    try {
+      return new Date(dl).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' });
+    } catch(_) { return dl; }
+  }
+
+  function buildCalStrip() {
+    return `<div class="cal-strip" id="cal-strip">
+      ${dates.map(date => {
+        const d = new Date(date + 'T12:00:00');
+        const dow = d.getDay();
+        const weekend = dow === 0 || dow === 6;
+        const count = countByDate(date);
+        const isActive = date === activeDate;
+        return `<button class="cal-day${weekend?' weekend':''}${count>0?' has-slots':''}${isActive?' active':''}" data-date="${date}">
+          <span class="cal-day-abbr">${DAY_ABBR[dow]}</span>
+          <span class="cal-day-date">${date.slice(5)}</span>
+          ${count>0 ? `<span class="cal-day-count">${count}</span>` : ''}
+        </button>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function buildTimesPanel(date) {
+    if (!date) return '';
+    const times = byDate[date] || [];
+    const weekend = !isWeekday(date);
+    const morning = weekend ? [] : times.filter(t => MORNING.includes(t));
+    const afternoon = weekend ? [] : times.filter(t => !MORNING.includes(t));
+    const wkendTimes = weekend ? times : [];
+    const renderBtn = time => {
+      const slot = `${date} ${time}`;
+      return `<button class="slot-btn${selected.has(slot)?' selected':''}" data-slot="${slot}">${time}</button>`;
+    };
+    const hasSel = getTimesForDate(date).length > 0;
+    return `
+      ${weekend
+        ? `<p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p>
+           <div class="slots-row">${wkendTimes.map(renderBtn).join('')}</div>`
+        : `<p class="slots-period-label">Manhã (06:00–08:00)</p>
+           <div class="slots-row">${morning.map(renderBtn).join('')}</div>
+           <p class="slots-period-label">Tarde/Noite (16:30–21:00)</p>
+           <div class="slots-row">${afternoon.map(renderBtn).join('')}</div>`}
+      ${hasSel ? `
+        <div class="batch-actions">
+          ${weekend
+            ? `<button class="btn btn-ghost btn-sm btn-batch-weekends">Aplicar a todos os fins de semana/feriados</button>`
+            : `<button class="btn btn-ghost btn-sm btn-batch-weekdays">Aplicar a todos os dias úteis</button>`}
+        </div>` : ''}`;
+  }
+
+  function render() {
+    const total = selected.size;
+    content.innerHTML = `
+      <div class="slots-screen">
+        <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Marcar Slots</h2>
+        <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px;">
+          Rodada ${round.round_number}${round.start_date ? ' · ' + round.start_date + ' → ' + round.end_date : ''}
+        </p>
+        ${round.deadline_slots ? `
+          <div class="deadline-bar" style="margin-bottom:10px;">
+            ⏰ Prazo: <strong>${fmtDeadline(round.deadline_slots)}</strong> · Art. 26: sem slot = WO automático
+          </div>` : ''}
+        <p class="slots-summary">${total} slot${total!==1?'s':''} selecionado${total!==1?'s':''}</p>
+        ${buildCalStrip()}
+        <div id="times-panel" style="margin-top:12px;">${buildTimesPanel(activeDate)}</div>
+        <div style="display:flex;gap:12px;margin-top:20px;">
+          <button id="btn-limpar" class="btn btn-ghost">Limpar tudo</button>
+          <button id="btn-salvar-slots" class="btn btn-primary">Salvar slots</button>
+        </div>
+        <p id="slots-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
+      </div>`;
+
+    // Scroll active day into view
+    setTimeout(() => {
+      content.querySelector(`.cal-day[data-date="${activeDate}"]`)?.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
+    }, 50);
+
+    // Cal day clicks
+    content.querySelectorAll('.cal-day').forEach(btn => {
+      btn.addEventListener('click', () => { activeDate = btn.dataset.date; render(); });
+    });
+
+    attachTimesPanel();
+
+    content.querySelector('#btn-limpar').addEventListener('click', () => { selected.clear(); render(); });
+
+    content.querySelector('#btn-salvar-slots').addEventListener('click', async () => {
+      const msgEl = content.querySelector('#slots-msg');
+      const btn = content.querySelector('#btn-salvar-slots');
+      btn.disabled = true; btn.textContent = 'Salvando…';
+      try {
+        await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
+        msgEl.textContent = '✓ Slots salvos com sucesso!';
+        msgEl.style.color = 'var(--color-cat-c)';
+        msgEl.classList.remove('hidden');
+      } catch (err) {
+        msgEl.textContent = `Erro: ${err.message}`;
+        msgEl.style.color = '#D94040';
+        msgEl.classList.remove('hidden');
+      } finally { btn.disabled = false; btn.textContent = 'Salvar slots'; }
     });
   }
 
-  attachSlotClicks();
-
-  content.querySelector('#btn-limpar').addEventListener('click', () => {
-    selected.clear();
-    refreshGrid();
-  });
-
-  content.querySelector('#btn-salvar-slots').addEventListener('click', async () => {
-    const msgEl = content.querySelector('#slots-msg');
-    const btn = content.querySelector('#btn-salvar-slots');
-    btn.disabled = true;
-    btn.textContent = 'Salvando…';
-    try {
-      await api(`/api/rounds/${round.id}/slots`, {
-        method: 'PUT',
-        body: { slots: [...selected] },
+  function attachTimesPanel() {
+    content.querySelectorAll('.slot-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const slot = btn.dataset.slot;
+        if (selected.has(slot)) { selected.delete(slot); btn.classList.remove('selected'); }
+        else { selected.add(slot); btn.classList.add('selected'); }
+        // Update cal chip for active date
+        const count = countByDate(activeDate);
+        const chip = content.querySelector(`.cal-day[data-date="${activeDate}"]`);
+        if (chip) {
+          chip.classList.toggle('has-slots', count > 0);
+          let countEl = chip.querySelector('.cal-day-count');
+          if (count > 0) { if (countEl) countEl.textContent = count; else chip.insertAdjacentHTML('beforeend', `<span class="cal-day-count">${count}</span>`); }
+          else if (countEl) countEl.remove();
+        }
+        content.querySelector('.slots-summary').textContent = `${selected.size} slot${selected.size!==1?'s':''} selecionado${selected.size!==1?'s':''}`;
+        // Refresh batch button visibility
+        const panel = content.querySelector('#times-panel');
+        if (panel) panel.innerHTML = buildTimesPanel(activeDate);
+        attachTimesPanel();
       });
-      msgEl.textContent = '✓ Slots salvos com sucesso!';
-      msgEl.style.color = 'var(--color-cat-c)';
-      msgEl.classList.remove('hidden');
-    } catch (err) {
-      msgEl.textContent = `Erro: ${err.message}`;
-      msgEl.style.color = '#D94040';
-      msgEl.classList.remove('hidden');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Salvar slots';
-    }
-  });
+    });
+
+    content.querySelector('.btn-batch-weekdays')?.addEventListener('click', () => {
+      const times = getTimesForDate(activeDate);
+      if (!times.length) { showToast('Selecione ao menos um horário primeiro.', 'warning'); return; }
+      for (const date of dates) {
+        if (!isWeekday(date)) continue;
+        for (const time of times) { if (byDate[date]?.includes(time)) selected.add(`${date} ${time}`); }
+      }
+      render();
+    });
+
+    content.querySelector('.btn-batch-weekends')?.addEventListener('click', () => {
+      const times = getTimesForDate(activeDate);
+      if (!times.length) { showToast('Selecione ao menos um horário primeiro.', 'warning'); return; }
+      for (const date of dates) {
+        if (isWeekday(date)) continue;
+        for (const time of times) { if (byDate[date]?.includes(time)) selected.add(`${date} ${time}`); }
+      }
+      render();
+    });
+  }
+
+  render();
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 # Art. 26: Atleta marca slots até 48h antes da rodada; sem slot = WO automático.
 # Art. 27: Interseção dos slots dos 4 atletas → slot mais cedo; sem interseção → admin media.
 # Art. 28: Seg-Sex 06:00-08:00 e 16:30-21:00; Sáb/Dom/Feriado 07:00-10:00 (slots 30min).
+# Formato de slot: "YYYY-MM-DD HH:MM"
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # ---------------------------------------------------------------------------
 # Art. 28 — Slots elegíveis por tipo de dia
@@ -132,3 +133,37 @@ def check_deadline_passed(deadline_str: str) -> bool:
 def validate_slot(slot: str, date_str: str, holidays: list[str] = None) -> bool:
     """Retorna True se o slot é elegível para a data informada."""
     return slot in eligible_slots(date_str, holidays or [])
+
+
+def eligible_slots_for_round(start_date: str, end_date: str, holidays: list[str] = None) -> list[str]:
+    """Retorna todos os slots 'YYYY-MM-DD HH:MM' válidos dentro da janela da rodada."""
+    from datetime import date as _date
+    holidays = holidays or []
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    result = []
+    current = start
+    while current <= end:
+        date_str = current.strftime("%Y-%m-%d")
+        for time_slot in eligible_slots(date_str, holidays):
+            result.append(f"{date_str} {time_slot}")
+        current += timedelta(days=1)
+    return result
+
+
+def validate_slot_datetime(slot: str, start_date: str, end_date: str, holidays: list[str] = None) -> bool:
+    """Valida slot no formato 'YYYY-MM-DD HH:MM' dentro da janela da rodada."""
+    try:
+        parts = slot.split(" ", 1)
+        if len(parts) != 2:
+            return False
+        date_str, time_str = parts
+        from datetime import date as _date
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        if not (start <= d <= end):
+            return False
+        return validate_slot(time_str, date_str, holidays or [])
+    except Exception:
+        return False

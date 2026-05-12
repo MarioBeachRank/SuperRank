@@ -316,7 +316,8 @@ def seasons_create():
     year = body.get("year")
     start_date = (body.get("start_date") or "").strip()
     end_date = (body.get("end_date") or "").strip()
-    rounds_total = body.get("rounds_total", 4)  # Art. 13: default 4 rodadas
+    rounds_total = int(body.get("rounds_total", 4))
+    round_duration_days = int(body.get("round_duration_days", 10))
     location_mode = body.get("location_mode", "single")
     location = (body.get("location") or "Clube do Play").strip()
 
@@ -328,8 +329,10 @@ def seasons_create():
         return jsonify({"error": "Datas de início e fim são obrigatórias"}), 400
     if start_date >= end_date:
         return jsonify({"error": "Data de fim deve ser posterior à de início"}), 400
-    if not isinstance(rounds_total, int) or rounds_total < 1:
-        return jsonify({"error": "Número de rodadas inválido"}), 400
+    if not (2 <= rounds_total <= 5):
+        return jsonify({"error": "Número de rodadas deve ser entre 2 e 5"}), 400
+    if not (1 <= round_duration_days <= 60):
+        return jsonify({"error": "Duração de rodada deve ser entre 1 e 60 dias"}), 400
     if location_mode not in ("single", "multiple"):
         return jsonify({"error": "Modo de local inválido"}), 400
 
@@ -338,6 +341,7 @@ def seasons_create():
         "name": name,
         "year": year,
         "rounds_total": rounds_total,
+        "round_duration_days": round_duration_days,
         "start_date": start_date,
         "end_date": end_date,
         "status": "pending",
@@ -379,6 +383,8 @@ def seasons_update(season_id):
             season[field] = body[field]
     if "rounds_total" in body:
         season["rounds_total"] = int(body["rounds_total"])
+    if "round_duration_days" in body:
+        season["round_duration_days"] = int(body["round_duration_days"])
 
     write_json("seasons.json", db)
     return jsonify(season)
@@ -543,7 +549,24 @@ def rounds_create(season_id):
 
     body = request.get_json(silent=True) or {}
     deadline_slots = body.get("deadline_slots")
-    target_date = body.get("target_date")  # Art. 28: data da rodada para slots elegíveis
+
+    # Calcula start_date / end_date da rodada a partir da temporada
+    from datetime import timedelta as _td
+    round_duration_days = season.get("round_duration_days", 10)
+    season_start = season.get("start_date")
+    if season_start:
+        _start_dt = datetime.strptime(season_start, "%Y-%m-%d")
+        _round_start_dt = _start_dt + _td(days=(round_number - 1) * round_duration_days)
+        _round_end_dt = _round_start_dt + _td(days=round_duration_days - 1)
+        round_start_date = _round_start_dt.strftime("%Y-%m-%d")
+        round_end_date = _round_end_dt.strftime("%Y-%m-%d")
+    else:
+        round_start_date = None
+        round_end_date = None
+
+    # Prazo padrão: último dia da rodada às 22:00 BRT
+    if not deadline_slots and round_end_date:
+        deadline_slots = f"{round_end_date}T22:00:00-03:00"
 
     # Art. 25: sorteio greedy com mínima repetição
     draw_result = draw_all_categories(season, rounds_db["data"])
@@ -576,8 +599,10 @@ def rounds_create(season_id):
         "season_id": season_id,
         "round_number": round_number,
         "status": "pending",
-        "target_date": target_date,
+        "start_date": round_start_date,
+        "end_date": round_end_date,
         "deadline_slots": deadline_slots,
+        "draw_authorized": False,
         "groups": groups_flat,
         "groups_sets": groups_sets,
         "official_slots": official_slots_init,
@@ -629,6 +654,23 @@ def rounds_update(round_id):
     return jsonify(_enrich_round(rnd, athletes_by_id))
 
 
+@app.route("/api/rounds/<round_id>/authorize-draw", methods=["POST"])
+@require_admin
+def authorize_draw(round_id):
+    """Admin autoriza sorteio da próxima rodada antes do dia final."""
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd["status"] == "closed":
+        return jsonify({"error": "Rodada já encerrada"}), 400
+    rnd["draw_authorized"] = True
+    rnd["draw_authorized_at"] = now_iso()
+    write_json("rounds.json", rounds_db)
+    athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
+    return jsonify(_enrich_round(rnd, athletes_by_id))
+
+
 # ---------------------------------------------------------------------------
 # Slots — Art. 26 + Art. 27
 # ---------------------------------------------------------------------------
@@ -663,7 +705,7 @@ def slots_get(round_id):
 @require_atleta
 def slots_put(round_id):
     """Art. 26: atleta marca/atualiza seus slots de disponibilidade."""
-    from engines.schedule_engine import eligible_slots, check_deadline_passed, validate_slot
+    from engines.schedule_engine import check_deadline_passed, validate_slot_datetime
 
     rounds_db = read_json("rounds.json")
     rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
@@ -684,12 +726,13 @@ def slots_put(round_id):
     body = request.get_json(silent=True) or {}
     submitted_slots = body.get("slots", [])
 
-    # Valida slots contra os elegíveis (Art. 28), se target_date definido
-    target_date = rnd.get("target_date")
-    if target_date and submitted_slots:
-        invalid = [s for s in submitted_slots if not validate_slot(s, target_date)]
+    # Valida slots contra a janela de datas da rodada (Art. 28)
+    start_date = rnd.get("start_date")
+    end_date = rnd.get("end_date")
+    if start_date and end_date and submitted_slots:
+        invalid = [s for s in submitted_slots if not validate_slot_datetime(s, start_date, end_date)]
         if invalid:
-            return jsonify({"error": f"Slots inelegíveis para {target_date}: {invalid}"}), 400
+            return jsonify({"error": f"Slots inválidos para a rodada: {invalid}"}), 400
 
     # Remove duplicatas e ordena
     submitted_slots = sorted(set(submitted_slots))
@@ -775,7 +818,7 @@ def slots_resolve(round_id):
 @require_admin
 def slots_mediate(round_id, cat, group_idx):
     """Art. 27: admin define manualmente o horário quando não há interseção."""
-    from engines.schedule_engine import validate_slot
+    from engines.schedule_engine import validate_slot_datetime
 
     if cat not in CATEGORIES:
         return jsonify({"error": "Categoria inválida"}), 400
@@ -794,10 +837,11 @@ def slots_mediate(round_id, cat, group_idx):
     if group_idx >= len(groups):
         return jsonify({"error": f"Grupo {group_idx} não existe em Cat {cat}"}), 404
 
-    # Valida o slot contra a data da rodada
-    target_date = rnd.get("target_date")
-    if target_date and not validate_slot(slot, target_date):
-        return jsonify({"error": f"Slot {slot} não é elegível para {target_date} (Art. 28)"}), 400
+    # Valida o slot contra a janela de datas da rodada
+    start_date = rnd.get("start_date")
+    end_date = rnd.get("end_date")
+    if start_date and end_date and not validate_slot_datetime(slot, start_date, end_date):
+        return jsonify({"error": f"Slot {slot!r} não é elegível para esta rodada (Art. 28)"}), 400
 
     official_slots = rnd.setdefault("official_slots", {})
     if cat not in official_slots:
@@ -1254,8 +1298,10 @@ def mesa_context():
             "id": current_round["id"],
             "round_number": current_round["round_number"],
             "rounds_total": season["rounds_total"],
-            "target_date": current_round.get("target_date"),
+            "start_date": current_round.get("start_date"),
+            "end_date": current_round.get("end_date"),
             "deadline_slots": current_round.get("deadline_slots"),
+            "draw_authorized": current_round.get("draw_authorized", False),
             "status": current_round["status"],
         },
         "group": group_info,
@@ -1281,12 +1327,13 @@ def _safe_season(s: dict) -> dict:
 
 
 def _eligible_for_round(rnd: dict) -> list:
-    """Retorna slots elegíveis para a target_date da rodada, ou lista completa se sem data."""
-    from engines.schedule_engine import eligible_slots, SLOTS_WEEKDAY
-    target = rnd.get("target_date")
-    if not target:
-        return SLOTS_WEEKDAY  # fallback para dia útil padrão
-    return eligible_slots(target)
+    """Retorna todos os slots 'YYYY-MM-DD HH:MM' válidos para a janela da rodada."""
+    from engines.schedule_engine import eligible_slots_for_round, SLOTS_WEEKDAY
+    start_date = rnd.get("start_date")
+    end_date = rnd.get("end_date")
+    if start_date and end_date:
+        return eligible_slots_for_round(start_date, end_date)
+    return SLOTS_WEEKDAY  # fallback sem datas
 
 
 # ---------------------------------------------------------------------------
