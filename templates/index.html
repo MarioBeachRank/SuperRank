@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/style.css?v={{ build_id }}" />
   <link rel="manifest" href="/static/manifest.json" />
   <meta name="theme-color" content="#0C1B2E" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -363,7 +363,7 @@
     </div>
   </template>
 
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v={{ build_id }}"></script>
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/static/sw.js').catch(() => {});

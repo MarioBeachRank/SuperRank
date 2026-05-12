@@ -72,9 +72,11 @@ def require_atleta(f):
 # Rota principal
 # ---------------------------------------------------------------------------
 
+_BUILD_ID = os.getenv("RAILWAY_DEPLOYMENT_ID", str(int(datetime.now().timestamp())))
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", build_id=_BUILD_ID)
 
 
 # ---------------------------------------------------------------------------
