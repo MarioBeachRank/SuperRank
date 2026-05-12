@@ -1663,6 +1663,61 @@ input[type="checkbox"] { accent-color: var(--color-primary); }
 input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 
 /* =====================================================================
+   Atletas — card layout mobile
+   ===================================================================== */
+
+.atleta-row-mobile { display: none; }
+
+@media (max-width: 600px) {
+  .atleta-row-desktop { display: none; }
+  .atleta-row-mobile  { display: table-row; }
+
+  /* Esconde cabeçalho da tabela no mobile */
+  #atletas-table thead { display: none; }
+}
+
+.atleta-card-mobile {
+  padding: 12px 14px;
+  border-bottom: var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.atleta-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.atleta-card-nome {
+  font-weight: 600;
+  font-size: var(--font-size-base);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atleta-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+}
+
+.atleta-card-acoes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* =====================================================================
    Phone input group
    ===================================================================== */
 
