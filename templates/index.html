@@ -6,13 +6,35 @@
   <title>SuperRank — Rei do Play</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/style.css" />
   <link rel="manifest" href="/static/manifest.json" />
-  <meta name="theme-color" content="#1A3C4A" />
+  <meta name="theme-color" content="#0C1B2E" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="SuperRank" />
+
+  <!-- PWA icons -->
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png" />
+  <link rel="icon" type="image/png" sizes="512x512" href="/static/icon-512.png" />
+
+  <!-- Open Graph (WhatsApp, Facebook, iMessage, etc.) -->
+  <meta property="og:type"        content="website" />
+  <meta property="og:site_name"   content="SuperRank" />
+  <meta property="og:title"       content="SuperRank — Rei do Play" />
+  <meta property="og:description" content="Ranking contínuo de Beach Tennis · Clube do Play · Feira de Santana, BA. Acompanhe sua posição, resultados e estatísticas." />
+  <meta property="og:image"       content="https://beachrank-production.up.railway.app/static/og-image.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:url"         content="https://beachrank-production.up.railway.app" />
+  <meta property="og:locale"      content="pt_BR" />
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card"        content="summary_large_image" />
+  <meta name="twitter:title"       content="SuperRank — Rei do Play" />
+  <meta name="twitter:description" content="Ranking contínuo de Beach Tennis · Clube do Play · Feira de Santana, BA." />
+  <meta name="twitter:image"       content="https://beachrank-production.up.railway.app/static/og-image.png" />
 </head>
 <body>
   <div id="app" role="application" aria-label="SuperRank Rei do Play">
@@ -22,56 +44,78 @@
 
   <!-- Templates de tela (hidden, clonados pelo JS) -->
 
+  <!-- =====================================================================
+       Tela de Login / Landing
+       ===================================================================== -->
   <template id="tpl-login">
-    <div class="screen screen-login">
+    <div class="screen screen-landing">
+
+      <!-- Logo hero -->
+      <div class="landing-logo-block">
+        <div class="landing-logo-icon">🎾</div>
+        <div class="landing-logo-name">Super<span>Rank</span></div>
+        <div class="landing-tagline">Rei do Play · Clube do Play</div>
+      </div>
+
+      <!-- Login card with tab choice (atleta / admin) -->
       <div class="login-card">
-        <div class="login-logo">
-          <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
-          <span class="logo-sub">Rei do Play · Clube do Play</span>
-        </div>
 
         <div class="tab-bar">
-          <button class="tab-btn active" data-tab="atleta">Atleta</button>
+          <button class="tab-btn active" data-tab="atleta">Sou Atleta</button>
           <button class="tab-btn" data-tab="admin">Admin</button>
         </div>
 
         <!-- Login Atleta -->
         <form id="form-login-atleta" class="tab-content active" data-tab="atleta">
-          <label class="field-label">Nome</label>
-          <input type="text" name="nome" class="field-input" placeholder="Seu nome completo" required />
-          <label class="field-label">PIN</label>
-          <input type="password" name="pin" class="field-input" placeholder="PIN de 4 dígitos" maxlength="4" required />
-          <button type="submit" class="btn btn-primary btn-full">Entrar</button>
-          <a href="#cadastro" class="link-secondary">Ainda não sou atleta — Cadastrar</a>
+          <div class="form-group">
+            <label class="field-label">Nome</label>
+            <input type="text" name="nome" class="field-input" placeholder="Seu nome completo" autocomplete="name" required />
+          </div>
+          <div class="form-group">
+            <label class="field-label">PIN</label>
+            <input type="password" name="pin" class="field-input" placeholder="••••" maxlength="4" inputmode="numeric" autocomplete="current-password" required />
+          </div>
+          <button type="submit" class="btn btn-primary btn-full btn-lg">Entrar</button>
+          <a href="#cadastro" class="link-secondary">Não tenho cadastro — Cadastrar →</a>
         </form>
 
         <!-- Login Admin -->
         <form id="form-login-admin" class="tab-content" data-tab="admin">
-          <label class="field-label">Senha de Administrador</label>
-          <input type="password" name="password" class="field-input" placeholder="Senha admin" required />
+          <div class="form-group">
+            <label class="field-label">Senha de Administrador</label>
+            <input type="password" name="password" class="field-input" placeholder="Senha admin" autocomplete="current-password" required />
+          </div>
           <p id="login-admin-error" class="field-error hidden"></p>
-          <button type="submit" class="btn btn-primary btn-full">Entrar como Admin</button>
+          <button type="submit" class="btn btn-primary btn-full btn-lg">Entrar como Admin</button>
         </form>
+
+        <!-- Ranking público -->
+        <a href="#publico" class="landing-btn-publico">Ver Ranking Público →</a>
       </div>
+
+      <span class="landing-version">v1.2</span>
     </div>
   </template>
 
+  <!-- =====================================================================
+       Tela Pública
+       ===================================================================== -->
   <template id="tpl-publico">
     <div class="screen">
       <header class="top-bar">
         <span class="top-bar-title">SuperRank · Rei do Play</span>
         <nav class="top-bar-nav">
-          <a href="#publico/ranking" class="nav-link">Ranking</a>
-          <a href="#publico/grupos" class="nav-link">Grupos</a>
+          <a href="#publico/ranking"    class="nav-link">Ranking</a>
+          <a href="#publico/grupos"     class="nav-link">Grupos</a>
           <a href="#publico/resultados" class="nav-link">Resultados</a>
-          <a href="#publico/titulos" class="nav-link">Títulos</a>
-          <a href="#publico/busca" class="nav-link">Busca</a>
-          <a href="#login" class="nav-link nav-link-cta">Entrar</a>
+          <a href="#publico/titulos"    class="nav-link">Títulos</a>
+          <a href="#publico/busca"      class="nav-link">Busca</a>
+          <a href="#login"              class="nav-link nav-link-cta">Entrar</a>
         </nav>
       </header>
       <main class="main-content" id="publico-content">
         <section class="hero">
-          <h1 class="hero-title">Rei do Play</h1>
+          <h1 class="hero-title">Rei do Play 🎾</h1>
           <p class="hero-sub">Ranking contínuo de Beach Tennis · Clube do Play · Feira de Santana, BA</p>
         </section>
         <section class="categories-grid" id="categories-overview"></section>
@@ -79,55 +123,146 @@
     </div>
   </template>
 
+  <!-- =====================================================================
+       Tela Admin (sidebar desktop + bottom nav mobile)
+       ===================================================================== -->
   <template id="tpl-admin">
     <div class="screen screen-admin">
       <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
       <aside class="sidebar" id="admin-sidebar" role="navigation" aria-label="Menu do administrador">
         <div class="sidebar-logo">
           <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
           <span class="sidebar-badge">Admin</span>
         </div>
         <nav class="sidebar-nav">
-          <a href="#admin/dashboard" class="sidebar-link">Dashboard</a>
-          <a href="#admin/atletas" class="sidebar-link">Atletas</a>
-          <a href="#admin/categorias" class="sidebar-link">Categorias</a>
-          <a href="#admin/temporada/nova" class="sidebar-link">Nova Temporada</a>
-          <a href="#admin/rodada" class="sidebar-link">Painel de Rodada</a>
-          <a href="#admin/mediacao" class="sidebar-link">Mediação de Slot</a>
-          <a href="#admin/resultados" class="sidebar-link">Resultados</a>
-          <a href="#admin/fechamento" class="sidebar-link">Fechamento</a>
-          <a href="#admin/anual" class="sidebar-link">Anual</a>
-          <a href="#admin/relatorio" class="sidebar-link">Relatório</a>
-          <a href="#admin/contestacoes" class="sidebar-link" style="display:flex;align-items:center;">Contestações <span class="sidebar-notif-badge" id="contested-badge"></span></a>
+          <a href="#admin/dashboard"    class="sidebar-link">📊 Dashboard</a>
+          <a href="#admin/atletas"      class="sidebar-link">🏃 Atletas</a>
+          <a href="#admin/categorias"   class="sidebar-link">🗂 Categorias</a>
+          <a href="#admin/temporada/nova" class="sidebar-link">➕ Nova Temporada</a>
+          <a href="#admin/rodada"       class="sidebar-link">🎯 Painel de Rodada</a>
+          <a href="#admin/mediacao"     class="sidebar-link">🕐 Mediação de Slot</a>
+          <a href="#admin/resultados"   class="sidebar-link">📋 Resultados</a>
+          <a href="#admin/fechamento"   class="sidebar-link">🔒 Fechamento</a>
+          <a href="#admin/anual"        class="sidebar-link">🏆 Anual</a>
+          <a href="#admin/relatorio"    class="sidebar-link">📈 Relatório</a>
+          <a href="#admin/contestacoes" class="sidebar-link" style="display:flex;align-items:center;">
+            ⚠️ Contestações <span class="sidebar-notif-badge" id="contested-badge"></span>
+          </a>
         </nav>
         <button id="btn-logout" class="btn btn-ghost btn-full sidebar-logout">Sair</button>
       </aside>
+
       <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+        <!-- Mobile top bar (hamburger) -->
         <div class="admin-topbar" id="admin-topbar">
-          <button class="sidebar-toggle" id="btn-sidebar-toggle" aria-label="Abrir menu" aria-expanded="false" aria-controls="admin-sidebar">&#9776;</button>
-          <span class="logo-super" style="font-size:14px;">Super</span><span class="logo-rank" style="font-size:14px;">Rank</span>
+          <button class="sidebar-toggle" id="btn-sidebar-toggle"
+                  aria-label="Abrir menu" aria-expanded="false" aria-controls="admin-sidebar">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6"  x2="21" y2="6"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+              <line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+          </button>
+          <span class="logo-super" style="font-size:15px;">Super</span><span class="logo-rank" style="font-size:15px;">Rank</span>
+          <span class="sidebar-badge" style="margin-left:4px;">Admin</span>
         </div>
+
         <main class="admin-main" id="admin-content" role="main">
           <p class="placeholder-text">Selecione uma opção no menu.</p>
         </main>
       </div>
+
+      <!-- Mobile bottom nav (visible only on ≤640px via CSS) -->
+      <nav class="admin-bottom-nav" id="admin-bottom-nav" aria-label="Navegação rápida admin">
+        <button class="admin-bottom-nav-item" onclick="location.hash='admin/dashboard'">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="admin-bottom-nav-item" onclick="location.hash='admin/atletas'">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          <span>Atletas</span>
+        </button>
+        <button class="admin-bottom-nav-item" onclick="location.hash='admin/rodada'">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span>Rodada</span>
+        </button>
+        <button class="admin-bottom-nav-item" id="btn-admin-mais">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          <span>Mais</span>
+        </button>
+      </nav>
+
+      <!-- "Mais" bottom sheet -->
+      <div class="more-sheet-overlay" id="more-sheet-overlay"></div>
+      <div class="more-sheet" id="more-sheet">
+        <div class="more-sheet-handle"></div>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/categorias'">
+          <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          Categorias
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/mediacao'">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Mediação de Slot
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/resultados'">
+          <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Resultados
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/fechamento'">
+          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          Fechamento
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/anual'">
+          <svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Anual / Títulos
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/relatorio'">
+          <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Relatório
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/contestacoes'">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Contestações <span class="sidebar-notif-badge" id="contested-badge-sheet"></span>
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();document.getElementById('btn-logout').click()">
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Sair
+        </button>
+      </div>
+
     </div>
   </template>
 
+  <!-- =====================================================================
+       Tela Mesa (Atleta) — 4 itens com ícones
+       ===================================================================== -->
   <template id="tpl-mesa">
     <div class="screen screen-mesa">
-      <header class="top-bar">
-        <span class="top-bar-title">SuperRank</span>
-        <span id="mesa-atleta-nome" class="top-bar-user"></span>
+      <!-- Compact top strip — preserves JS hooks -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--color-surface);border-bottom:var(--border);flex-shrink:0;">
+        <span style="font-size:15px;font-weight:800;letter-spacing:-0.5px;color:var(--color-text);">Super<span style="color:var(--color-primary);">Rank</span></span>
+        <span id="mesa-atleta-nome" style="font-size:12px;color:var(--color-text-muted);flex:1;text-align:center;"></span>
         <button id="btn-mesa-logout" class="btn btn-ghost btn-sm">Sair</button>
-      </header>
-      <nav class="bottom-nav">
-        <a href="#mesa/home" class="bottom-nav-item">Home</a>
-        <a href="#mesa/slots" class="bottom-nav-item">Slots</a>
-        <a href="#mesa/grupo" class="bottom-nav-item">Grupo</a>
-        <a href="#mesa/resultado" class="bottom-nav-item">Resultado</a>
-        <a href="#mesa/historico" class="bottom-nav-item">Histórico</a>
-        <a href="#mesa/perfil" class="bottom-nav-item">Perfil</a>
+      </div>
+      <nav class="bottom-nav" id="mesa-bottom-nav">
+        <a href="#mesa/home" class="bottom-nav-item">
+          <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          <span class="bottom-nav-label">Home</span>
+        </a>
+        <a href="#mesa/grupo" class="bottom-nav-item">
+          <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+          <span class="bottom-nav-label">Grupo</span>
+        </a>
+        <a href="#mesa/slots" class="bottom-nav-item">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <span class="bottom-nav-label">Slots</span>
+        </a>
+        <a href="#mesa/perfil" class="bottom-nav-item">
+          <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span class="bottom-nav-label">Perfil</span>
+        </a>
       </nav>
       <main class="mesa-main" id="mesa-content">
         <p class="placeholder-text">Carregando...</p>
@@ -135,44 +270,60 @@
     </div>
   </template>
 
-  <!-- Cadastro público de novo atleta -->
+  <!-- =====================================================================
+       Cadastro público de novo atleta
+       ===================================================================== -->
   <template id="tpl-cadastro">
-    <div class="screen screen-login">
+    <div class="screen screen-landing">
+      <div class="landing-logo-block">
+        <div class="landing-logo-icon">🎾</div>
+        <div class="landing-logo-name">Super<span>Rank</span></div>
+        <div class="landing-tagline">Cadastro de Atleta</div>
+      </div>
+
       <div class="login-card" style="max-width:420px;">
-        <div class="login-logo">
-          <span class="logo-super">Super</span><span class="logo-rank">Rank</span>
-          <span class="logo-sub">Cadastro de Atleta</span>
-        </div>
-        <form id="form-cadastro">
-          <label class="field-label">Nome completo</label>
-          <input type="text" name="nome" class="field-input" placeholder="Como você é conhecido no clube" required />
+        <form id="form-cadastro" style="display:flex;flex-direction:column;gap:var(--space-md);">
+          <div class="form-group">
+            <label class="field-label">Nome completo</label>
+            <input type="text" name="nome" class="field-input" placeholder="Como você é conhecido no clube" required />
+          </div>
 
-          <label class="field-label">PIN (4 dígitos)</label>
-          <input type="password" name="pin" class="field-input" placeholder="Escolha um PIN de 4 dígitos" maxlength="4" inputmode="numeric" required />
+          <div class="form-group">
+            <label class="field-label">PIN (4 dígitos)</label>
+            <input type="password" name="pin" class="field-input" placeholder="Escolha um PIN de 4 dígitos" maxlength="4" inputmode="numeric" required />
+          </div>
 
-          <label class="field-label">Confirmar PIN</label>
-          <input type="password" name="pin_confirm" class="field-input" placeholder="Repita o PIN" maxlength="4" inputmode="numeric" required />
+          <div class="form-group">
+            <label class="field-label">Confirmar PIN</label>
+            <input type="password" name="pin_confirm" class="field-input" placeholder="Repita o PIN" maxlength="4" inputmode="numeric" required />
+          </div>
 
-          <label class="field-label">Categoria desejada</label>
-          <select name="desired_category" class="field-input">
-            <option value="">Sem preferência (entro em Cat D)</option>
-            <option value="D">Cat D — Iniciante</option>
-            <option value="C">Cat C — Intermediário</option>
-            <option value="B">Cat B — Avançado</option>
-          </select>
-          <p class="field-hint">Cat A é acessível apenas por promoção. O admin confirmará sua categoria.</p>
+          <div class="form-group">
+            <label class="field-label">Categoria desejada</label>
+            <select name="desired_category" class="field-input">
+              <option value="">Sem preferência (entro em Cat D)</option>
+              <option value="D">Cat D — Iniciante</option>
+              <option value="C">Cat C — Intermediário</option>
+              <option value="B">Cat B — Avançado</option>
+            </select>
+            <span class="field-hint">Cat A é acessível apenas por promoção. O admin confirmará sua categoria.</span>
+          </div>
 
-          <p id="cadastro-error" class="field-error hidden"></p>
+          <p id="cadastro-error"   class="field-error hidden"></p>
           <p id="cadastro-success" class="field-success hidden"></p>
 
-          <button type="submit" class="btn btn-primary btn-full">Solicitar Cadastro</button>
+          <button type="submit" class="btn btn-primary btn-full btn-lg">Solicitar Cadastro</button>
           <a href="#login" class="link-secondary">Já tenho cadastro — Entrar</a>
         </form>
       </div>
+
+      <span class="landing-version">v1.2</span>
     </div>
   </template>
 
-  <!-- Modal genérico (reutilizado por todas as telas) -->
+  <!-- =====================================================================
+       Modal genérico (reutilizado por todas as telas)
+       ===================================================================== -->
   <template id="tpl-modal">
     <div class="modal-overlay" id="modal-overlay">
       <div class="modal" id="modal-box" role="dialog" aria-modal="true">
@@ -191,6 +342,26 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/static/sw.js').catch(() => {});
     }
+
+    /* More-sheet open/close (admin mobile) — event delegation, works after template clone */
+    function closeMoreSheet() {
+      var s = document.getElementById('more-sheet');
+      var o = document.getElementById('more-sheet-overlay');
+      if (s) s.classList.remove('open');
+      if (o) o.classList.remove('open');
+    }
+
+    document.addEventListener('click', function(e) {
+      var mais = e.target.closest('#btn-admin-mais');
+      if (mais) {
+        var s = document.getElementById('more-sheet');
+        var o = document.getElementById('more-sheet-overlay');
+        if (s) s.classList.add('open');
+        if (o) o.classList.add('open');
+        return;
+      }
+      if (e.target.closest('#more-sheet-overlay')) closeMoreSheet();
+    });
   </script>
 </body>
 </html>
