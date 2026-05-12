@@ -365,6 +365,25 @@
 
   <script src="/static/js/app.js?v={{ build_id }}"></script>
   <script>
+    /* Diagnóstico de overflow horizontal — remove após correção */
+    setTimeout(function() {
+      var w = document.documentElement.offsetWidth;
+      var offenders = [];
+      document.querySelectorAll('*').forEach(function(el) {
+        if (el.offsetWidth > w) {
+          offenders.push(el.tagName + (el.id ? '#'+el.id : '') + (el.className ? '.'+String(el.className).trim().split(' ')[0] : '') + ' → ' + el.offsetWidth + 'px');
+        }
+      });
+      if (offenders.length) {
+        console.warn('OVERFLOW ELEMENTS:', offenders.join(' | '));
+        document.title = '⚠ ' + offenders[0];
+      } else {
+        console.log('Sem overflow detectado. Viewport: ' + w + 'px');
+        document.title = 'OK ' + w + 'px';
+      }
+    }, 2000);
+  </script>
+  <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/static/sw.js').catch(() => {});
     }
