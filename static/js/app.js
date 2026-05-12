@@ -2201,6 +2201,7 @@ function renderMesaSlots(content, ctx) {
 
   const MORNING = ["06:00","06:30","07:00","07:30"];
   const DAY_ABBR = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  const DAY_FULL = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 
   // Group eligible slots by date
   const byDate = {};
@@ -2218,6 +2219,7 @@ function renderMesaSlots(content, ctx) {
 
   let selected = new Set(my_slots.filter(s => s.includes('-')));
   let activeDate = dates[0] || null;
+  let replicationTargets = new Set(); // dates chosen to receive replication
 
   function countByDate(date) {
     return (byDate[date] || []).filter(t => selected.has(`${date} ${t}`)).length;
@@ -2235,7 +2237,7 @@ function renderMesaSlots(content, ctx) {
   }
 
   function buildCalStrip() {
-    return `<div class="cal-strip" id="cal-strip">
+    return `<div class="cal-strip">
       ${dates.map(date => {
         const d = new Date(date + 'T12:00:00');
         const dow = d.getDay();
@@ -2262,21 +2264,69 @@ function renderMesaSlots(content, ctx) {
       const slot = `${date} ${time}`;
       return `<button class="slot-btn${selected.has(slot)?' selected':''}" data-slot="${slot}">${time}</button>`;
     };
-    const hasSel = getTimesForDate(date).length > 0;
+    return weekend
+      ? `<p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p>
+         <div class="slots-row">${wkendTimes.map(renderBtn).join('')}</div>`
+      : `<p class="slots-period-label">Manhã (06:00–08:00)</p>
+         <div class="slots-row">${morning.map(renderBtn).join('')}</div>
+         <p class="slots-period-label">Tarde/Noite (16:30–21:00)</p>
+         <div class="slots-row">${afternoon.map(renderBtn).join('')}</div>`;
+  }
+
+  function buildReplicationPanel(date) {
+    if (!date) return '';
+    const activeIsWeekend = !isWeekday(date);
+    const peers = dates.filter(d => d !== date && (activeIsWeekend ? !isWeekday(d) : isWeekday(d)));
+    if (!peers.length) return '';
+
+    const selTimes = getTimesForDate(date);
+    const hasSelection = selTimes.length > 0;
+    const checkedCount = replicationTargets.size;
+
     return `
-      ${weekend
-        ? `<p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p>
-           <div class="slots-row">${wkendTimes.map(renderBtn).join('')}</div>`
-        : `<p class="slots-period-label">Manhã (06:00–08:00)</p>
-           <div class="slots-row">${morning.map(renderBtn).join('')}</div>
-           <p class="slots-period-label">Tarde/Noite (16:30–21:00)</p>
-           <div class="slots-row">${afternoon.map(renderBtn).join('')}</div>`}
-      ${hasSel ? `
-        <div class="batch-actions">
-          ${weekend
-            ? `<button class="btn btn-ghost btn-sm btn-batch-weekends">Aplicar a todos os fins de semana/feriados</button>`
-            : `<button class="btn btn-ghost btn-sm btn-batch-weekdays">Aplicar a todos os dias úteis</button>`}
-        </div>` : ''}`;
+      <div class="replication-panel${!hasSelection ? ' replication-dimmed' : ''}">
+        <p class="slots-period-label" style="margin-bottom:8px;">
+          ${hasSelection
+            ? `Replicar estes horários para:`
+            : `Selecione horários acima para poder replicar`}
+        </p>
+        <div class="replication-day-list">
+          ${peers.map(d => {
+            const dow = new Date(d + 'T12:00:00').getDay();
+            const checked = replicationTargets.has(d);
+            const cnt = countByDate(d);
+            return `<label class="replication-day-item${checked?' checked':''}${!hasSelection?' disabled':''}">
+              <input type="checkbox" class="rep-checkbox" data-date="${d}"
+                ${checked ? 'checked' : ''} ${!hasSelection ? 'disabled' : ''}/>
+              <span class="rep-day-name">${DAY_FULL[dow]}</span>
+              <span class="rep-day-date">${d.slice(5)}</span>
+              ${cnt > 0 ? `<span class="rep-day-count">${cnt} slot${cnt>1?'s':''}</span>` : ''}
+            </label>`;
+          }).join('')}
+        </div>
+        ${hasSelection && checkedCount > 0 ? `
+          <button class="btn btn-primary btn-sm btn-aplicar-rep" style="margin-top:12px;width:100%;">
+            ✓ Aplicar a ${checkedCount} dia${checkedCount>1?'s':''} selecionado${checkedCount>1?'s':''}
+          </button>` : ''}
+      </div>`;
+  }
+
+  function refreshPanel() {
+    const container = content.querySelector('#times-and-rep');
+    if (container) container.innerHTML = buildTimesPanel(activeDate) + buildReplicationPanel(activeDate);
+    const total = selected.size;
+    const summary = content.querySelector('.slots-summary');
+    if (summary) summary.textContent = `${total} slot${total!==1?'s':''} selecionado${total!==1?'s':''}`;
+    // Update cal strip counts without full re-render
+    content.querySelectorAll('.cal-day').forEach(chip => {
+      const d = chip.dataset.date;
+      const cnt = countByDate(d);
+      chip.classList.toggle('has-slots', cnt > 0);
+      let el = chip.querySelector('.cal-day-count');
+      if (cnt > 0) { if (el) el.textContent = cnt; else chip.insertAdjacentHTML('beforeend', `<span class="cal-day-count">${cnt}</span>`); }
+      else if (el) el.remove();
+    });
+    attachInteractions();
   }
 
   function render() {
@@ -2293,7 +2343,10 @@ function renderMesaSlots(content, ctx) {
           </div>` : ''}
         <p class="slots-summary">${total} slot${total!==1?'s':''} selecionado${total!==1?'s':''}</p>
         ${buildCalStrip()}
-        <div id="times-panel" style="margin-top:12px;">${buildTimesPanel(activeDate)}</div>
+        <div id="times-and-rep" style="margin-top:12px;">
+          ${buildTimesPanel(activeDate)}
+          ${buildReplicationPanel(activeDate)}
+        </div>
         <div style="display:flex;gap:12px;margin-top:20px;">
           <button id="btn-limpar" class="btn btn-ghost">Limpar tudo</button>
           <button id="btn-salvar-slots" class="btn btn-primary">Salvar slots</button>
@@ -2301,19 +2354,24 @@ function renderMesaSlots(content, ctx) {
         <p id="slots-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
       </div>`;
 
-    // Scroll active day into view
     setTimeout(() => {
       content.querySelector(`.cal-day[data-date="${activeDate}"]`)?.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' });
     }, 50);
 
-    // Cal day clicks
+    // Cal day click → switch day, reset replication targets
     content.querySelectorAll('.cal-day').forEach(btn => {
-      btn.addEventListener('click', () => { activeDate = btn.dataset.date; render(); });
+      btn.addEventListener('click', () => {
+        if (btn.dataset.date !== activeDate) {
+          activeDate = btn.dataset.date;
+          replicationTargets.clear();
+        }
+        render();
+      });
     });
 
-    attachTimesPanel();
-
-    content.querySelector('#btn-limpar').addEventListener('click', () => { selected.clear(); render(); });
+    content.querySelector('#btn-limpar').addEventListener('click', () => {
+      selected.clear(); replicationTargets.clear(); render();
+    });
 
     content.querySelector('#btn-salvar-slots').addEventListener('click', async () => {
       const msgEl = content.querySelector('#slots-msg');
@@ -2330,49 +2388,41 @@ function renderMesaSlots(content, ctx) {
         msgEl.classList.remove('hidden');
       } finally { btn.disabled = false; btn.textContent = 'Salvar slots'; }
     });
+
+    attachInteractions();
   }
 
-  function attachTimesPanel() {
+  function attachInteractions() {
+    // Slot time buttons
     content.querySelectorAll('.slot-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const slot = btn.dataset.slot;
-        if (selected.has(slot)) { selected.delete(slot); btn.classList.remove('selected'); }
-        else { selected.add(slot); btn.classList.add('selected'); }
-        // Update cal chip for active date
-        const count = countByDate(activeDate);
-        const chip = content.querySelector(`.cal-day[data-date="${activeDate}"]`);
-        if (chip) {
-          chip.classList.toggle('has-slots', count > 0);
-          let countEl = chip.querySelector('.cal-day-count');
-          if (count > 0) { if (countEl) countEl.textContent = count; else chip.insertAdjacentHTML('beforeend', `<span class="cal-day-count">${count}</span>`); }
-          else if (countEl) countEl.remove();
-        }
-        content.querySelector('.slots-summary').textContent = `${selected.size} slot${selected.size!==1?'s':''} selecionado${selected.size!==1?'s':''}`;
-        // Refresh batch button visibility
-        const panel = content.querySelector('#times-panel');
-        if (panel) panel.innerHTML = buildTimesPanel(activeDate);
-        attachTimesPanel();
+        if (selected.has(slot)) selected.delete(slot); else selected.add(slot);
+        refreshPanel();
       });
     });
 
-    content.querySelector('.btn-batch-weekdays')?.addEventListener('click', () => {
-      const times = getTimesForDate(activeDate);
-      if (!times.length) { showToast('Selecione ao menos um horário primeiro.', 'warning'); return; }
-      for (const date of dates) {
-        if (!isWeekday(date)) continue;
-        for (const time of times) { if (byDate[date]?.includes(time)) selected.add(`${date} ${time}`); }
-      }
-      render();
+    // Replication checkboxes
+    content.querySelectorAll('.rep-checkbox').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) replicationTargets.add(cb.dataset.date);
+        else replicationTargets.delete(cb.dataset.date);
+        refreshPanel();
+      });
     });
 
-    content.querySelector('.btn-batch-weekends')?.addEventListener('click', () => {
+    // Apply replication (additive: adds to existing slots of target days)
+    content.querySelector('.btn-aplicar-rep')?.addEventListener('click', () => {
       const times = getTimesForDate(activeDate);
-      if (!times.length) { showToast('Selecione ao menos um horário primeiro.', 'warning'); return; }
-      for (const date of dates) {
-        if (isWeekday(date)) continue;
-        for (const time of times) { if (byDate[date]?.includes(time)) selected.add(`${date} ${time}`); }
+      const count = replicationTargets.size;
+      for (const targetDate of replicationTargets) {
+        for (const time of times) {
+          if (byDate[targetDate]?.includes(time)) selected.add(`${targetDate} ${time}`);
+        }
       }
-      render();
+      replicationTargets.clear();
+      showToast(`Horários replicados para ${count} dia${count>1?'s':''}.`, 'success');
+      refreshPanel();
     });
   }
 

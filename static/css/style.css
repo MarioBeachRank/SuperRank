@@ -1174,6 +1174,50 @@ select.field-input {
   flex-wrap: wrap;
 }
 
+/* Replication panel */
+.replication-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: var(--border);
+}
+
+.replication-panel.replication-dimmed { opacity: 0.5; pointer-events: none; }
+.replication-panel.replication-dimmed .rep-checkbox { cursor: not-allowed; }
+
+.replication-day-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.replication-day-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  user-select: none;
+}
+
+.replication-day-item:hover:not(.disabled) { border-color: var(--color-primary); }
+.replication-day-item.checked { border-color: var(--color-primary); background: rgba(255,107,53,0.10); }
+.replication-day-item.disabled { opacity: 0.5; cursor: not-allowed; }
+
+.replication-day-item input[type="checkbox"] {
+  width: 16px; height: 16px;
+  accent-color: var(--color-primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.rep-day-name { font-size: 13px; font-weight: 600; flex: 1; }
+.rep-day-date { font-size: 11px; color: var(--color-text-muted); }
+.rep-day-count { font-size: 11px; color: var(--color-cat-c); font-weight: 600; margin-left: auto; }
+
 /* =====================================================================
    Meu Grupo (Mesa)
    ===================================================================== */
