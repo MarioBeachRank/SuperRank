@@ -116,7 +116,11 @@ def auth_atleta():
 
     session["atleta_id"] = atleta["id"]
     session["atleta_nome"] = atleta["nome"]
-    return jsonify({"ok": True, "atleta": {"id": atleta["id"], "nome": atleta["nome"]}})
+    return jsonify({"ok": True, "atleta": {
+        "id": atleta["id"],
+        "nome": atleta["nome"],
+        "apelido": atleta.get("apelido") or atleta["nome"],
+    }})
 
 
 @app.route("/api/auth/logout", methods=["POST"])
@@ -153,13 +157,16 @@ def athletes_create():
     """Cadastro público (self-registro) ou criação pelo admin."""
     body = request.get_json(silent=True) or {}
     nome = (body.get("nome") or "").strip()
+    apelido = (body.get("apelido") or "").strip()
     pin = (body.get("pin") or "").strip()
     tipo = body.get("type", "reserva")
     desired = body.get("desired_category")  # B/C/D ou None — Art. 6
 
     # Validações
     if not nome:
-        return jsonify({"error": "Nome é obrigatório"}), 400
+        return jsonify({"error": "Nome completo é obrigatório"}), 400
+    if not apelido:
+        return jsonify({"error": "Apelido é obrigatório"}), 400
     if tipo not in ("titular", "reserva", "visitante"):
         return jsonify({"error": "Tipo inválido"}), 400
     if tipo in ("titular", "reserva") and (not pin or not pin.isdigit() or len(pin) != 4):
@@ -178,24 +185,30 @@ def athletes_create():
 
     db = read_json("athletes.json")
 
-    # Nome duplicado
     if any(a["nome"].lower() == nome.lower() for a in db["data"]):
-        return jsonify({"error": "Já existe um atleta com este nome"}), 409
+        return jsonify({"error": "Já existe um atleta com este nome completo"}), 409
+    if any((a.get("apelido") or "").lower() == apelido.lower() for a in db["data"]):
+        return jsonify({"error": "Este apelido já está em uso"}), 409
 
     telefone = re.sub(r'\D', '', str(body.get("telefone") or ""))
-    if telefone and not (10 <= len(telefone) <= 15):
+    if not telefone:
+        return jsonify({"error": "Telefone (WhatsApp) é obrigatório"}), 400
+    if not (10 <= len(telefone) <= 15):
         return jsonify({"error": "Telefone inválido (10-15 dígitos com código do país)"}), 400
+    if any(re.sub(r'\D', '', str(a.get("telefone") or "")) == telefone for a in db["data"]):
+        return jsonify({"error": "Este número de telefone já está cadastrado"}), 409
 
     atleta = {
         "id": str(uuid.uuid4()),
         "nome": nome,
+        "apelido": apelido,
         "pin_hash": hash_pin(pin) if pin else None,
         "type": tipo,
         "current_category": admin_cat if admin_cat else None,
         "desired_category": desired,
         "admin_confirmed": bool(admin_cat),
         "status": "ativo",
-        "telefone": telefone or None,
+        "telefone": telefone,
         "created_at": now_iso(),
         "category_history": [],
     }
@@ -223,6 +236,14 @@ def athletes_update(athlete_id):
         if any(a["nome"].lower() == nome.lower() and a["id"] != athlete_id for a in db["data"]):
             return jsonify({"error": "Nome já em uso"}), 409
         atleta["nome"] = nome
+
+    if "apelido" in body:
+        apelido = body["apelido"].strip()
+        if not apelido:
+            return jsonify({"error": "Apelido não pode ser vazio"}), 400
+        if any((a.get("apelido") or "").lower() == apelido.lower() and a["id"] != athlete_id for a in db["data"]):
+            return jsonify({"error": "Apelido já em uso"}), 409
+        atleta["apelido"] = apelido
 
     if "pin" in body:
         pin = (body["pin"] or "").strip()
@@ -459,7 +480,7 @@ def _enrich_round(rnd: dict, athletes_by_id: dict) -> dict:
 
     enriched["groups_named"] = {
         cat: [
-            [athletes_by_id.get(aid, {}).get("nome", aid) for aid in group]
+            [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in group]
             for group in groups
         ]
         for cat, groups in rnd.get("groups", {}).items()
@@ -478,8 +499,8 @@ def _enrich_round(rnd: dict, athletes_by_id: dict) -> dict:
             [
                 {
                     "set": s["set"],
-                    "team_a": [athletes_by_id.get(aid, {}).get("nome", aid) for aid in s["team_a"]],
-                    "team_b": [athletes_by_id.get(aid, {}).get("nome", aid) for aid in s["team_b"]],
+                    "team_a": [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in s["team_a"]],
+                    "team_b": [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in s["team_b"]],
                 }
                 for s in set_list
             ]
@@ -868,7 +889,10 @@ def get_ranking(season_id):
     for cat in cats:
         setup = category_setup.get(cat, {})
         titular_ids = setup.get("titular_ids", [])
-        athletes_in_cat = [a for a in athletes_db["data"] if a["id"] in titular_ids]
+        athletes_in_cat = [
+            {**a, "nome": _display_name(a)}
+            for a in athletes_db["data"] if a["id"] in titular_ids
+        ]
         response[cat] = compute_ranking(
             athletes_in_cat,
             results_db["data"],
@@ -892,7 +916,10 @@ def get_ranking_full(season_id):
     athletes_db = read_json("athletes.json")
     results_db  = read_json("results.json")
 
-    all_athletes = [a for a in athletes_db["data"] if a.get("status") == "ativo"]
+    all_athletes = [
+        {**a, "nome": _display_name(a)}
+        for a in athletes_db["data"] if a.get("status") == "ativo"
+    ]
     ranking = compute_ranking(all_athletes, results_db["data"], season_id=season_id)
     return jsonify(ranking)
 
@@ -1169,7 +1196,7 @@ def mesa_context():
         group = current_round["groups"][cat][group_idx]
         group_info = {
             "athlete_ids": group,
-            "names": [athletes_by_id.get(aid, {}).get("nome", aid) for aid in group],
+            "names": [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in group],
             "category": cat,
             "group_index": group_idx,
             "sets": current_round.get("groups_sets", {}).get(cat, [[]])[group_idx],
@@ -1215,7 +1242,7 @@ def mesa_context():
             )
             group_slots_status.append({
                 "athlete_id": aid,
-                "nome": athletes_by_id.get(aid, {}).get("nome", aid),
+                "nome": _display_name(athletes_by_id.get(aid, {"nome": aid})),
                 "has_slots": bool(slot_record and slot_record.get("slots")),
                 "telefone": athletes_by_id.get(aid, {}).get("telefone"),
             })
@@ -1238,6 +1265,11 @@ def mesa_context():
         "pending_result": pending_result,
         "group_slots_status": group_slots_status,
     })
+
+
+def _display_name(atleta: dict) -> str:
+    """Apelido para exibição; fallback para nome completo em cadastros antigos."""
+    return atleta.get("apelido") or atleta.get("nome", "")
 
 
 def _safe_athlete(a: dict) -> dict:

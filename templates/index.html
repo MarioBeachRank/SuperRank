@@ -98,6 +98,9 @@
             <input type="password" name="pin" class="field-input" placeholder="••••" maxlength="4" inputmode="numeric" autocomplete="current-password" required />
           </div>
           <button type="submit" class="btn btn-primary btn-full btn-lg">Entrar</button>
+          <p style="font-size:11px;color:var(--color-text-muted);text-align:center;margin-top:4px;">
+            Não consegue entrar? Peça ao admin para cadastrar seu WhatsApp.
+          </p>
           <a href="#cadastro" class="link-secondary">Não tenho cadastro — Cadastrar →</a>
         </form>
 
@@ -334,7 +337,12 @@
         <form id="form-cadastro" style="display:flex;flex-direction:column;gap:var(--space-md);">
           <div class="form-group">
             <label class="field-label">Nome completo</label>
-            <input type="text" name="nome" class="field-input" placeholder="Como você é conhecido no clube" required />
+            <input type="text" name="nome" class="field-input" placeholder="Seu nome completo" required />
+          </div>
+
+          <div class="form-group">
+            <label class="field-label">Apelido <span style="font-size:11px;color:var(--color-text-muted);">(nome exibido no clube)</span></label>
+            <input type="text" name="apelido" class="field-input" placeholder="Ex: Mazinho, Rafa, BS Fininho" required />
           </div>
 
           <div class="form-group">

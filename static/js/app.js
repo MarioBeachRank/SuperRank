@@ -417,6 +417,7 @@ function renderCadastro() {
     successEl.classList.add('hidden');
 
     const nome = e.target.nome.value.trim();
+    const apelido = e.target.apelido.value.trim();
     const pin = e.target.pin.value;
     const pinConfirm = e.target.pin_confirm.value;
     const desired = e.target.desired_category.value || null;
@@ -424,6 +425,16 @@ function renderCadastro() {
     const localNumber = e.target.phone_local ? e.target.phone_local.value.replace(/\D/g, '') : '';
     const telefone = localNumber ? countryCode + localNumber : '';
 
+    if (!apelido) {
+      errorEl.textContent = 'Apelido é obrigatório.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!telefone) {
+      errorEl.textContent = 'WhatsApp é obrigatório.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
     if (pin !== pinConfirm) {
       errorEl.textContent = 'Os PINs não coincidem.';
       errorEl.classList.remove('hidden');
@@ -442,7 +453,7 @@ function renderCadastro() {
     try {
       await api('/api/athletes', {
         method: 'POST',
-        body: { nome, pin, type: 'reserva', desired_category: desired, telefone: telefone || null },
+        body: { nome, apelido, pin, type: 'reserva', desired_category: desired, telefone },
       });
       successEl.textContent = 'Solicitação enviada! O admin confirmará sua categoria em breve.';
       successEl.classList.remove('hidden');
@@ -936,10 +947,13 @@ function renderAtletasRows(athletes) {
       const confirmado = a.admin_confirmed
         ? '<span style="color:#2A7A3A;">✓ confirmado</span>'
         : '<span style="color:#BA7517;">⚠ pendente</span>';
+      const displayNome = a.apelido
+        ? `${escapeHtml(a.apelido)} <span style="font-size:11px;color:var(--color-text-muted);">(${escapeHtml(a.nome)})</span>`
+        : escapeHtml(a.nome);
       return `
         <div class="atleta-card-mobile">
           <div class="atleta-card-top">
-            <span class="atleta-card-nome">${escapeHtml(a.nome)}</span>
+            <span class="atleta-card-nome">${displayNome}</span>
             ${statusBadge(a.status)}
           </div>
           <div class="atleta-card-meta">
@@ -957,7 +971,11 @@ function renderAtletasRows(athletes) {
 
   return athletes.map(a => `
     <tr>
-      <td style="font-weight:500;">${escapeHtml(a.nome)}${!a.admin_confirmed ? ' <span style="color:#BA7517;">⚠</span>' : ''}</td>
+      <td style="font-weight:500;">
+        ${a.apelido ? escapeHtml(a.apelido) : escapeHtml(a.nome)}
+        ${a.apelido ? `<span style="font-size:11px;color:var(--color-text-muted);display:block;">${escapeHtml(a.nome)}</span>` : ''}
+        ${!a.admin_confirmed ? ' <span style="color:#BA7517;">⚠</span>' : ''}
+      </td>
       <td>${typeBadge(a.type)}</td>
       <td>${catLabel(a.current_category)}</td>
       <td>${a.admin_confirmed ? '<span style="color:#2A7A3A;">✓</span>' : '<span style="color:#BA7517;">Pendente</span>'}</td>
@@ -978,8 +996,12 @@ function openAtletaModal(atleta = null) {
   const body = `
     <form id="form-atleta" class="form-grid">
       <div class="form-group full">
-        <label class="field-label">Nome completo</label>
+        <label class="field-label">Nome completo <span style="font-size:11px;color:var(--color-text-muted);">(só admin vê)</span></label>
         <input type="text" name="nome" class="field-input" value="${escapeHtml(atleta?.nome || '')}" required />
+      </div>
+      <div class="form-group full">
+        <label class="field-label">Apelido <span style="font-size:11px;color:var(--color-text-muted);">(nome exibido no clube)</span></label>
+        <input type="text" name="apelido" class="field-input" value="${escapeHtml(atleta?.apelido || '')}" required />
       </div>
       <div class="form-group">
         <label class="field-label">PIN (4 dígitos)${isEdit ? ' — deixe em branco para manter' : ''}</label>
@@ -1037,6 +1059,7 @@ function openAtletaModal(atleta = null) {
     const telefone = localNumber ? countryCode + localNumber : null;
     const body = {
       nome: fd.get('nome').trim(),
+      apelido: fd.get('apelido').trim(),
       type: fd.get('type'),
       telefone,
     };
@@ -1848,7 +1871,7 @@ async function renderMesa(sub) {
   app.appendChild(frag);
 
   if (state.atleta) {
-    app.querySelector('#mesa-atleta-nome').textContent = state.atleta.nome;
+    app.querySelector('#mesa-atleta-nome').textContent = state.atleta.apelido || state.atleta.nome;
   }
 
   const activeHref = `#mesa/${sub || 'home'}`;
