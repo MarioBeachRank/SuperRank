@@ -400,12 +400,6 @@ def category_update(season_id, cat):
     titular_ids = body.get("titular_ids", [])
     reserva_ids = body.get("reserva_ids", [])
 
-    # Art. 5: titulares devem ser múltiplo de 4 (exceto temporada sem atletas ainda)
-    if titular_ids and len(titular_ids) % 4 != 0:
-        return jsonify({"error": f"Cat {cat}: número de titulares deve ser múltiplo de 4 (atual: {len(titular_ids)})"}), 400
-    if titular_ids and len(titular_ids) < 4:
-        return jsonify({"error": f"Cat {cat}: mínimo de 4 titulares"}), 400
-
     # Valida IDs de atletas
     athletes_db = read_json("athletes.json")
     all_ids = {a["id"] for a in athletes_db["data"]}
