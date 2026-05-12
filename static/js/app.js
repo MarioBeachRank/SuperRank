@@ -785,6 +785,25 @@ async function renderAdminAtletas(content) {
 
 function paintAtletasTable(content) {
   const athletes = state.athletes;
+  const isMobile = window.innerWidth < 640;
+
+  const tableBlock = isMobile ? `
+    <div id="atletas-list">
+      ${renderAtletasRows(athletes)}
+    </div>` : `
+    <div class="card" style="padding:0;overflow:hidden;">
+      <table class="data-table" id="atletas-table">
+        <thead>
+          <tr>
+            <th>Nome</th><th>Tipo</th><th>Categoria</th>
+            <th>Confirmado</th><th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="atletas-tbody">
+          ${renderAtletasRows(athletes)}
+        </tbody>
+      </table>
+    </div>`;
 
   content.innerHTML = `
     <div class="section-header">
@@ -813,23 +832,7 @@ function paintAtletasTable(content) {
       </select>
     </div>
 
-    <div class="card" style="padding:0;overflow:hidden;">
-      <table class="data-table" id="atletas-table">
-        <thead>
-          <tr>
-            <th>Nome</th>
-            <th>Tipo</th>
-            <th>Categoria</th>
-            <th>Confirmado</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="atletas-tbody">
-          ${renderAtletasRows(athletes)}
-        </tbody>
-      </table>
-    </div>`;
+    ${tableBlock}`;
 
   // Botão novo atleta
   content.querySelector('#btn-novo-atleta').addEventListener('click', () => openAtletaModal());
@@ -846,7 +849,10 @@ function paintAtletasTable(content) {
         || (catF === 'sem' ? !a.current_category : a.current_category === catF);
       return matchName && matchType && matchCat;
     });
-    content.querySelector('#atletas-tbody').innerHTML = renderAtletasRows(filtered);
+    const listEl  = content.querySelector('#atletas-list');
+    const tbodyEl = content.querySelector('#atletas-tbody');
+    if (listEl)  { listEl.innerHTML  = renderAtletasRows(filtered); }
+    if (tbodyEl) { tbodyEl.innerHTML = renderAtletasRows(filtered); }
     attachRowActions();
   }
 
@@ -912,42 +918,51 @@ function paintAtletasTable(content) {
 }
 
 function renderAtletasRows(athletes) {
+  const isMobile = window.innerWidth < 640;
+
   if (!athletes.length) {
+    if (isMobile) return `<p class="placeholder-text" style="padding:24px;">Nenhum atleta encontrado.</p>`;
     return `<tr><td colspan="6"><p class="placeholder-text" style="padding:24px;">Nenhum atleta encontrado.</p></td></tr>`;
   }
-  return athletes.map(a => {
-    const confirmado = a.admin_confirmed
-      ? '<span style="color:#2A7A3A;">✓ confirmado</span>'
-      : `<span style="color:#BA7517;">⚠ pendente</span>`;
-    const acoes = `
-      ${waBtn(a.telefone)}
-      <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}">Editar</button>
-      <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" title="Gerar PIN temporário">PIN</button>
-      <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;">✕</button>`;
-    return `
-      <tr class="atleta-row-desktop">
-        <td style="font-weight:500;">${escapeHtml(a.nome)}${!a.admin_confirmed ? ' <span style="color:#BA7517;">⚠</span>' : ''}</td>
-        <td>${typeBadge(a.type)}</td>
-        <td>${catLabel(a.current_category)}</td>
-        <td>${a.admin_confirmed ? '<span style="color:#2A7A3A;">✓</span>' : `<span style="color:#BA7517;">Pendente</span>`}</td>
-        <td>${statusBadge(a.status)}</td>
-        <td style="text-align:right;white-space:nowrap;">${acoes}</td>
-      </tr>
-      <tr class="atleta-row-mobile">
-        <td colspan="6" style="padding:0;">
-          <div class="atleta-card-mobile">
-            <div class="atleta-card-top">
-              <span class="atleta-card-nome">${escapeHtml(a.nome)}</span>
-              ${statusBadge(a.status)}
-            </div>
-            <div class="atleta-card-meta">
-              ${typeBadge(a.type)} ${catLabel(a.current_category)} · ${confirmado}
-            </div>
-            <div class="atleta-card-acoes">${acoes}</div>
+
+  if (isMobile) {
+    return athletes.map(a => {
+      const confirmado = a.admin_confirmed
+        ? '<span style="color:#2A7A3A;">✓ confirmado</span>'
+        : '<span style="color:#BA7517;">⚠ pendente</span>';
+      return `
+        <div class="atleta-card-mobile">
+          <div class="atleta-card-top">
+            <span class="atleta-card-nome">${escapeHtml(a.nome)}</span>
+            ${statusBadge(a.status)}
           </div>
-        </td>
-      </tr>`;
-  }).join('');
+          <div class="atleta-card-meta">
+            ${typeBadge(a.type)} ${catLabel(a.current_category)} · ${confirmado}
+          </div>
+          <div class="atleta-card-acoes">
+            ${waBtn(a.telefone)}
+            <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}">Editar</button>
+            <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" title="PIN temporário">PIN</button>
+            <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;">✕</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  return athletes.map(a => `
+    <tr>
+      <td style="font-weight:500;">${escapeHtml(a.nome)}${!a.admin_confirmed ? ' <span style="color:#BA7517;">⚠</span>' : ''}</td>
+      <td>${typeBadge(a.type)}</td>
+      <td>${catLabel(a.current_category)}</td>
+      <td>${a.admin_confirmed ? '<span style="color:#2A7A3A;">✓</span>' : '<span style="color:#BA7517;">Pendente</span>'}</td>
+      <td>${statusBadge(a.status)}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        ${waBtn(a.telefone)}
+        <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}" style="margin-left:4px;">Editar</button>
+        <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" style="margin-left:4px;" title="PIN temporário">PIN</button>
+        <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;margin-left:4px;">Excluir</button>
+      </td>
+    </tr>`).join('');
 }
 
 function openAtletaModal(atleta = null) {

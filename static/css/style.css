@@ -1663,18 +1663,8 @@ input[type="checkbox"] { accent-color: var(--color-primary); }
 input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 
 /* =====================================================================
-   Atletas — card layout mobile
+   Atletas — card layout mobile (rendered via JS when window.innerWidth < 640)
    ===================================================================== */
-
-.atleta-row-mobile { display: none; }
-
-@media (max-width: 600px) {
-  .atleta-row-desktop { display: none; }
-  .atleta-row-mobile  { display: table-row; }
-
-  /* Esconde cabeçalho da tabela no mobile */
-  #atletas-table thead { display: none; }
-}
 
 .atleta-card-mobile {
   padding: 12px 14px;
