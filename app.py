@@ -1172,6 +1172,21 @@ def mesa_context():
         if pending_result:
             pending_result = _enrich_result(pending_result, athletes_by_id)
 
+    # Status de slots de cada colega do grupo
+    group_slots_status = []
+    if cat is not None and group_info:
+        for aid in group_info["athlete_ids"]:
+            slot_record = next(
+                (s for s in slots_db["data"]
+                 if s["round_id"] == current_round["id"] and s["athlete_id"] == aid),
+                None,
+            )
+            group_slots_status.append({
+                "athlete_id": aid,
+                "nome": athletes_by_id.get(aid, {}).get("nome", aid),
+                "has_slots": bool(slot_record and slot_record.get("slots")),
+            })
+
     return jsonify({
         "athlete": _safe_athlete(athlete),
         "season": _safe_season(season),
@@ -1188,6 +1203,7 @@ def mesa_context():
         "my_slots": my_slot_record["slots"] if my_slot_record else [],
         "eligible_slots": _eligible_for_round(current_round),
         "pending_result": pending_result,
+        "group_slots_status": group_slots_status,
     })
 
 

@@ -1692,59 +1692,123 @@ async function renderMesaHome(content, ctx) {
     return;
   }
 
-  const { season, round, group, official_slot, my_slots, eligible_slots: eligible, pending_result } = ctx;
+  const { season, round, group, official_slot, my_slots, pending_result } = ctx;
   const hasSlots = my_slots && my_slots.length > 0;
   const slotResolved = official_slot && official_slot.status === 'resolved';
+  const athleteCat = ctx.athlete.current_category;
 
   let pendencias = [];
   if (round && !hasSlots) pendencias.push({ icon: '⏰', text: 'Marcar slots de disponibilidade', link: '#mesa/slots', urgent: true });
   if (pending_result) pendencias.push({ icon: '📋', text: 'Confirmar resultado do grupo', link: '#mesa/resultado', urgent: true });
-  if (group && slotResolved)  pendencias.push({ icon: '✅', text: `Horário definido: ${official_slot.slot}`, link: '#mesa/grupo', urgent: false });
+  if (group && slotResolved) pendencias.push({ icon: '✅', text: `Horário definido: ${official_slot.slot}`, link: '#mesa/grupo', urgent: false });
   if (group && !slotResolved && hasSlots) pendencias.push({ icon: '🕐', text: 'Aguardando horário oficial do grupo', link: '#mesa/grupo', urgent: false });
 
-  // Busca ranking do atleta
-  let myRank = null;
-  const athleteCat = ctx.athlete.current_category;
-  if (athleteCat && season) {
-    try {
-      const rankData = await api(`/api/seasons/${season.id}/ranking?cat=${athleteCat}`);
-      const catRanking = rankData[athleteCat] || [];
-      myRank = catRanking.find(r => r.athlete_id === ctx.athlete.id) || null;
-    } catch (_) {}
+  // Parallel fetch: ranking + history
+  let myRank = null, catRanking = [], historyList = [];
+  try {
+    const [rankData, histData] = await Promise.all([
+      season && athleteCat ? api(`/api/seasons/${season.id}/ranking?cat=${athleteCat}`) : Promise.resolve({}),
+      api('/api/mesa/history'),
+    ]);
+    catRanking = rankData[athleteCat] || [];
+    myRank = catRanking.find(r => r.athlete_id === ctx.athlete.id) || null;
+    historyList = histData.history || [];
+  } catch (_) {}
+
+  const catTotal = catRanking.length;
+  const rank = myRank?.rank;
+
+  // Promo/releg bars (side by side in one row)
+  let promoRelegHtml = '';
+  if (myRank && catTotal > 0) {
+    const showPromo = athleteCat !== 'A';
+    const showReleg = athleteCat !== 'D';
+    const promoPct = showPromo ? Math.max(0, Math.round(100 * (1 - (rank - 1) / catTotal))) : 0;
+    const relegPct = showReleg ? Math.max(0, Math.round(100 * (rank - 1) / catTotal)) : 0;
+    const promoCol = showPromo ? `
+      <div style="flex:1;">
+        <div class="promo-releg-label up">Promoção</div>
+        <div class="promo-releg-bar-bg"><div class="promo-releg-bar-fill up" style="width:${promoPct}%;"></div></div>
+        <div class="promo-releg-pct up">${promoPct}%</div>
+      </div>` : '';
+    const relegCol = showReleg ? `
+      <div style="flex:1;">
+        <div class="promo-releg-label down">Rebaixamento</div>
+        <div class="promo-releg-bar-bg"><div class="promo-releg-bar-fill down" style="width:${relegPct}%;"></div></div>
+        <div class="promo-releg-pct down">${relegPct}%</div>
+      </div>` : '';
+    if (showPromo || showReleg) {
+      promoRelegHtml = `<div class="promo-releg-row" style="margin-bottom:var(--space-md);">${promoCol}${relegCol}</div>`;
+    }
   }
 
-  const rankCard = myRank ? `
-    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:16px;">
-      <div>
-        <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:2px;">Minha Posição</p>
-        <p style="font-size:36px;font-weight:800;color:var(--color-primary);line-height:1;">${myRank.rank}°</p>
-        <p style="font-size:12px;color:var(--color-text-muted);">${catLabel(athleteCat)}</p>
+  // Last result from history
+  const lastResult = historyList.length ? historyList[historyList.length - 1] : null;
+  const lastResultHtml = lastResult ? `
+    <div class="last-result-card">
+      <div class="last-result-header">
+        <span class="last-result-label">Último Resultado</span>
+        <span class="last-result-round">Rodada ${lastResult.round_number}</span>
       </div>
-      <div style="border-left:var(--border);padding-left:16px;flex:1;">
-        <p style="font-size:22px;font-weight:700;color:var(--color-primary);">${myRank.points}<span style="font-size:13px;font-weight:400;color:var(--color-text-muted);"> pts</span></p>
-        <p style="font-size:12px;color:var(--color-text-muted);">${myRank.wins} vitórias · saldo ${myRank.saldo >= 0 ? '+' : ''}${myRank.saldo}</p>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span class="last-result-score ${lastResult.rank_in_group === 1 ? 'pos-1' : lastResult.rank_in_group === 2 ? 'pos-2' : lastResult.rank_in_group === 3 ? 'pos-3' : 'other'}">${lastResult.rank_in_group}°</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;">${lastResult.my_total ?? '—'} pts · Cat ${lastResult.cat}</div>
+          <div class="last-result-detail">${lastResult.group_size} atletas no grupo</div>
+        </div>
       </div>
     </div>` : '';
 
+  // Hero card
+  const heroHtml = myRank ? `
+    <div class="mesa-hero-card">
+      <div class="mesa-hero-greeting">Olá,</div>
+      <div class="mesa-hero-name">${escapeHtml(ctx.athlete.nome)}</div>
+      <div class="mesa-hero-cat-row">
+        <span class="badge badge-cat-${athleteCat?.toLowerCase()}">${catLabel(athleteCat)}</span>
+      </div>
+      <div class="mesa-hero-rank-block">
+        <span class="mesa-hero-rank-pos">${rank}°</span>
+        <div class="mesa-hero-pts-block">
+          <div class="mesa-hero-pts-value">${myRank.points}</div>
+          <div class="mesa-hero-pts-label">pontos</div>
+        </div>
+      </div>
+      ${promoRelegHtml}
+      <div class="mesa-stats-grid">
+        <div class="mesa-stat-cell">
+          <div class="mesa-stat-value">${myRank.wins}</div>
+          <div class="mesa-stat-label">Vitórias</div>
+        </div>
+        <div class="mesa-stat-cell">
+          <div class="mesa-stat-value">${myRank.saldo >= 0 ? '+' : ''}${myRank.saldo}</div>
+          <div class="mesa-stat-label">Saldo Sets</div>
+        </div>
+        <div class="mesa-stat-cell">
+          <div class="mesa-stat-value">${catTotal}</div>
+          <div class="mesa-stat-label">Na categoria</div>
+        </div>
+      </div>
+    </div>` : `
+    <div class="mesa-hero-card">
+      <div class="mesa-hero-greeting">Olá,</div>
+      <div class="mesa-hero-name">${escapeHtml(ctx.athlete.nome)}</div>
+      <div class="mesa-hero-cat-row">
+        <span class="badge badge-cat-${athleteCat?.toLowerCase()}">${catLabel(athleteCat)}</span>
+      </div>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-top:8px;">Sem dados de ranking ainda.</p>
+    </div>`;
+
   content.innerHTML = `
     <div style="padding:var(--space-md);">
-      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">
-        Olá, ${escapeHtml(ctx.athlete.nome)}!
-      </h2>
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:20px;">
-        ${escapeHtml(season.name)} · ${catLabel(ctx.athlete.current_category)}
-      </p>
+      ${heroHtml}
 
-      ${rankCard}
+      ${lastResultHtml}
 
       ${round ? `
         <div class="card" style="margin-bottom:16px;">
-          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:4px;">
-            Rodada Atual
-          </p>
-          <p style="font-size:20px;font-weight:700;color:var(--color-primary);">
-            Rodada ${round.round_number} de ${round.rounds_total}
-          </p>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:4px;">Rodada Atual</p>
+          <p style="font-size:20px;font-weight:700;color:var(--color-primary);">Rodada ${round.round_number} de ${round.rounds_total}</p>
           ${round.target_date ? `<p style="font-size:13px;color:var(--color-text-muted);">Data: ${round.target_date}</p>` : ''}
           ${round.deadline_slots ? `<p style="font-size:12px;color:#BA7517;">Prazo slots: ${round.deadline_slots}</p>` : ''}
         </div>` : `<p class="placeholder-text">Nenhuma rodada criada ainda.</p>`}
@@ -1753,8 +1817,7 @@ async function renderMesaHome(content, ctx) {
         <div style="margin-bottom:16px;">
           <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">Pendências</p>
           ${pendencias.map(p => `
-            <a href="${p.link}" class="card" style="display:flex;align-items:center;gap:12px;margin-bottom:8px;text-decoration:none;
-               ${p.urgent ? 'border-left:3px solid var(--color-accent);' : ''}">
+            <a href="${p.link}" class="card" style="display:flex;align-items:center;gap:12px;margin-bottom:8px;text-decoration:none;${p.urgent ? 'border-left:3px solid var(--color-accent);' : ''}">
               <span style="font-size:20px;">${p.icon}</span>
               <span style="font-weight:500;font-size:14px;">${escapeHtml(p.text)}</span>
             </a>`).join('')}
@@ -1906,6 +1969,7 @@ function renderMesaGrupo(content, ctx) {
   }
 
   const { athlete, group, official_slot, round } = ctx;
+  const slotsStatus = ctx.group_slots_status || [];
   const slotResolved = official_slot && official_slot.status === 'resolved';
   const slotCard = slotResolved
     ? `<div class="official-slot-card">
@@ -1935,11 +1999,14 @@ function renderMesaGrupo(content, ctx) {
          color:var(--color-text-muted);margin-bottom:8px;">Atletas do Grupo</p>
       <div class="group-members-list" style="margin-bottom:20px;">
         ${group.names.map((nome, i) => {
-          const isMe = group.athlete_ids[i] === athlete.id;
-          const hasWo = official_slot?.wo_athlete_ids?.includes(group.athlete_ids[i]);
+          const aid = group.athlete_ids[i];
+          const isMe = aid === athlete.id;
+          const hasWo = official_slot?.wo_athlete_ids?.includes(aid);
+          const memberStatus = slotsStatus.find(s => s.athlete_id === aid);
+          const dotClass = memberStatus?.has_slots ? 'done' : 'pending';
           return `
             <div class="group-member-row${isMe ? ' is-me' : ''}">
-              ${catLabel(group.category)}
+              <span class="slot-status-dot ${dotClass}" title="${memberStatus?.has_slots ? 'Slots marcados' : 'Sem slots'}"></span>
               <span class="group-member-name">${escapeHtml(nome)}</span>
               ${isMe ? '<span class="badge badge-ativo">Eu</span>' : ''}
               ${hasWo ? '<span class="badge badge-inativo">WO</span>' : ''}
