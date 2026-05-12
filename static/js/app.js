@@ -647,6 +647,9 @@ async function renderAdmin(sub) {
     case 'categorias':
       await renderAdminCategorias(content);
       break;
+    case 'temporadas':
+      await renderAdminTemporadas(content);
+      break;
     case 'temporada/nova':
       renderAdminTemporadaNova(content);
       break;
@@ -1232,6 +1235,79 @@ async function saveCategory(season, cat, setup) {
 // ---------------------------------------------------------------------------
 // Admin: Criar Temporada
 // ---------------------------------------------------------------------------
+
+async function renderAdminTemporadas(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando temporadas…</p>`;
+
+  let seasons = [];
+  try { seasons = await api('/api/seasons'); } catch (err) {
+    content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+
+  const paint = () => {
+    content.innerHTML = `
+      <div class="section-header">
+        <div>
+          <h1 class="section-title">Temporadas</h1>
+          <p class="section-subtitle">${seasons.length} temporada(s) cadastrada(s)</p>
+        </div>
+        <a href="#admin/temporada/nova" class="btn btn-primary">+ Nova Temporada</a>
+      </div>
+
+      ${!seasons.length ? `<div class="alert alert-info">Nenhuma temporada. <a href="#admin/temporada/nova">Criar agora →</a></div>` : `
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table class="data-table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>Ano</th>
+              <th>Status</th>
+              <th>Período</th>
+              <th>Rodadas</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${seasons.map(s => `
+              <tr>
+                <td style="font-weight:500;">${escapeHtml(s.name)}</td>
+                <td>${s.year}</td>
+                <td>${seasonStatusBadge(s.status)}</td>
+                <td style="font-size:12px;">${s.start_date} → ${s.end_date}</td>
+                <td>${s.rounds_total}</td>
+                <td style="text-align:right;white-space:nowrap;">
+                  ${s.status === 'pending'
+                    ? `<button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#D94040;">Excluir</button>`
+                    : '—'}
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`}`;
+
+    content.querySelectorAll('.btn-excluir-temporada').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const nome = btn.dataset.nome;
+        if (!confirm(`Excluir temporada "${nome}"? Esta ação não pode ser desfeita.`)) return;
+        btn.disabled = true;
+        btn.textContent = 'Excluindo…';
+        try {
+          await api(`/api/seasons/${id}`, { method: 'DELETE' });
+          seasons = seasons.filter(s => s.id !== id);
+          paint();
+        } catch (err) {
+          alert(`Erro: ${err.message}`);
+          btn.disabled = false;
+          btn.textContent = 'Excluir';
+        }
+      });
+    });
+  };
+
+  paint();
+}
 
 function renderAdminTemporadaNova(content) {
   const today = new Date().toISOString().split('T')[0];

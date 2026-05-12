@@ -361,6 +361,20 @@ def seasons_update(season_id):
     return jsonify(season)
 
 
+@app.route("/api/seasons/<season_id>", methods=["DELETE"])
+@require_admin
+def seasons_delete(season_id):
+    db = read_json("seasons.json")
+    season = next((s for s in db["data"] if s["id"] == season_id), None)
+    if not season:
+        return jsonify({"error": "Temporada não encontrada"}), 404
+    if season["status"] != "pending":
+        return jsonify({"error": "Só é possível excluir temporadas com status 'pendente'"}), 400
+    db["data"] = [s for s in db["data"] if s["id"] != season_id]
+    write_json("seasons.json", db)
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------------------
 # Configuração de categorias da temporada
 # ---------------------------------------------------------------------------
