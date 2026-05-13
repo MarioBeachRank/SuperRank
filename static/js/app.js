@@ -5750,13 +5750,14 @@ async function renderAdminAnual(content) {
   const preselectedLiga = hashParams.get('liga');
 
   let ligas = [], galeria = [];
-  try {
-    [ligas, galeria] = await Promise.all([
-      api('/api/ligas'),
-      api('/api/titles').then(d => d.titles || []),
-    ]);
-  } catch (err) {
-    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
+  const [ligasRes, galeriaRes] = await Promise.allSettled([
+    api('/api/ligas'),
+    api('/api/titles').then(d => d.titles || []),
+  ]);
+  if (ligasRes.status   === 'fulfilled') ligas   = ligasRes.value;
+  if (galeriaRes.status === 'fulfilled') galeria  = galeriaRes.value;
+  if (ligasRes.status   !== 'fulfilled' && galeriaRes.status !== 'fulfilled') {
+    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro ao carregar dados de premiações.</p>`;
     return;
   }
 
@@ -6074,8 +6075,13 @@ function _buildGroupHtml(group) {
     <div style="margin-top:${scorelinesHtml ? '10px' : '0'}">${athleteRows}</div>`;
 }
 
-async function renderPublicoResultados(container, season) {
-  if (!season) {
+async function renderPublicoResultados(container, _defaultSeason, selectedSeasonId = null) {
+  container.innerHTML = `<p class="placeholder-text">Carregando histórico…</p>`;
+
+  let seasons = [];
+  try { seasons = await api('/api/seasons'); } catch (_) {}
+
+  if (!seasons.length) {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">📋</div>
@@ -6084,7 +6090,8 @@ async function renderPublicoResultados(container, season) {
     return;
   }
 
-  container.innerHTML = `<p class="placeholder-text">Carregando histórico…</p>`;
+  const activeSeason = seasons.find(s => s.status === 'active') || seasons[0];
+  const season = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || _defaultSeason || activeSeason;
 
   let data;
   try { data = await api(`/api/seasons/${season.id}/history`); }
@@ -6147,8 +6154,14 @@ async function renderPublicoResultados(container, season) {
       </div>`;
   }).join('');
 
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="resultados-season-sel" class="input" style="font-size:13px;max-width:220px;margin-bottom:10px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === season.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
+
   container.innerHTML = `
     <div style="padding:0 var(--space-md);">
+      ${seasonSelectHtml}
       <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:8px;">
         ${escapeHtml(season.name)} · ${rounds.length} rodada(s)
       </p>
@@ -6191,6 +6204,11 @@ async function renderPublicoResultados(container, season) {
   if (lastWithResult) {
     document.getElementById(`body-${lastWithResult.round_id}`)?.classList.add('open');
   }
+
+  // Season selector
+  container.querySelector('#resultados-season-sel')?.addEventListener('change', e => {
+    renderPublicoResultados(container, null, e.target.value);
+  });
 }
 
 
@@ -6354,6 +6372,13 @@ async function renderPublicoAtleta(container, athleteId) {
       <span class="public-stat-val">${s.total_points}pts · ${s.set_wins}W · ${s.rounds_played} rod.</span>
     </div>`).join('') || `<p style="padding:10px 0;font-size:13px;color:var(--color-text-muted);">Sem rodadas ainda.</p>`;
 
+  const cr = profile.current_rank;
+  const rankBadgeHtml = cr
+    ? `<span class="pub-rank-badge" title="${escapeHtml(cr.season_name)}">
+         ${cr.rank}° de ${cr.total} · ${catLabel(cr.cat)}
+       </span>`
+    : '';
+
   container.innerHTML = `
     <p style="margin-bottom:12px;">
       <a href="#publico/ranking" style="font-size:13px;color:var(--color-accent);">← Ranking</a>
@@ -6366,6 +6391,7 @@ async function renderPublicoAtleta(container, athleteId) {
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             ${catLabel(profile.current_category)}
             <span class="badge ${profile.status === 'ativo' ? 'badge-ativo' : 'badge-inativo'}">${profile.status}</span>
+            ${rankBadgeHtml}
           </div>
         </div>
       </div>
@@ -6488,6 +6514,23 @@ async function renderMesaPerfil(content) {
         ${historyHtml}
       </div>
 
+      <p class="profile-section-title">Compartilhar Perfil</p>
+      <div class="card" style="padding:var(--space-md);">
+        <p style="font-size:12px;color:var(--color-text-muted);margin:0 0 10px;">
+          Compartilhe sua posição no ranking com amigos.
+        </p>
+        <div class="share-url-row">
+          <code id="share-url" class="share-url-text">${location.origin}/#publico/atleta/${escapeHtml(profile.id)}</code>
+          <button id="btn-copy-link" class="btn btn-sm btn-ghost" title="Copiar link">📋 Copiar</button>
+        </div>
+        <div style="margin-top:10px;">
+          <a id="btn-share-wa" href="#" target="_blank" rel="noopener"
+             class="btn btn-sm" style="background:#25D366;border-color:#25D366;color:#fff;text-decoration:none;">
+            📲 Enviar no WhatsApp
+          </a>
+        </div>
+      </div>
+
       <p class="profile-section-title">Declarar Afastamento</p>
       <div class="card" style="padding:var(--space-md);">
         <p style="font-size:12px;color:var(--color-text-muted);margin:0 0 10px;">
@@ -6593,6 +6636,23 @@ async function renderMesaPerfil(content) {
       }, 'Confirmar Afastamento'
     );
   });
+
+  // Share profile
+  const shareUrl = `${location.origin}/#publico/atleta/${profile.id}`;
+  content.querySelector('#btn-copy-link').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      showToast('Link copiado!', 'success');
+    } catch (_) {
+      // Fallback para browsers sem clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = shareUrl;
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+      showToast('Link copiado!', 'success');
+    }
+  });
+  content.querySelector('#btn-share-wa').href =
+    `https://wa.me/?text=${encodeURIComponent('Acompanhe meu perfil no SuperRank: ' + shareUrl)}`;
 
   content.querySelector('#form-pin').addEventListener('submit', async e => {
     e.preventDefault();

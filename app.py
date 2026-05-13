@@ -2261,6 +2261,7 @@ def athlete_reset_pin(athlete_id):
 def athlete_public_profile(athlete_id):
     """Perfil público de um atleta (sem autenticação, sem pin_hash)."""
     from engines.profile_engine import compute_athlete_profile
+    from engines.ranking_engine import compute_ranking
     athletes_db = read_json("athletes.json")
     athlete = next((a for a in athletes_db["data"] if a["id"] == athlete_id), None)
     if not athlete:
@@ -2268,6 +2269,26 @@ def athlete_public_profile(athlete_id):
     seasons_db = read_json("seasons.json")
     results_db = read_json("results.json")
     profile = compute_athlete_profile(athlete, seasons_db["data"], results_db["data"], athletes_db["data"])
+
+    # Sprint 19: posição atual no ranking da temporada ativa
+    active_season = next((s for s in seasons_db["data"] if s.get("status") == "active"), None)
+    current_rank = None
+    cat = athlete.get("current_category")
+    if active_season and cat and athlete.get("tipo") == "titular" and athlete.get("status") == "ativo":
+        all_athletes = [
+            {**a, "nome": _display_name(a)}
+            for a in athletes_db["data"] if a.get("status") == "ativo"
+        ]
+        ranking = compute_ranking(all_athletes, results_db["data"], category=cat, season_id=active_season["id"])
+        entry = next((r for r in ranking if r["athlete_id"] == athlete_id), None)
+        if entry:
+            current_rank = {
+                "rank":        entry["rank"],
+                "total":       len(ranking),
+                "season_name": active_season["name"],
+                "cat":         cat,
+            }
+    profile["current_rank"] = current_rank
     return jsonify(profile)
 
 
