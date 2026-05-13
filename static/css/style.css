@@ -2759,3 +2759,54 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   color: var(--color-accent);
   white-space: nowrap;
 }
+
+/* =====================================================================
+   Sprint 13 — Fluxo de Resultados Aprimorado
+   ===================================================================== */
+
+/* --- Barra dupla de filtros (cat + status) --- */
+.resultados-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 var(--space-md) var(--space-sm);
+}
+.res-status-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.res-status-tab {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.res-status-tab:hover { background: var(--color-surface-2); color: var(--color-text); }
+.res-status-tab.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+
+/* --- Modal WO preview --- */
+.wo-preview-box {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.wo-preview-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--color-border);
+}
+.wo-preview-row:last-child { border-bottom: none; }
+.wo-preview-row.wo-present { background: rgba(34,197,94,0.06); }
+.wo-preview-row.wo-absent  { background: rgba(239,68,68,0.06); }
+.wo-pts { font-weight: 700; font-size: 13px; }
+.wo-pts.wo-zero { color: #EF4444; }

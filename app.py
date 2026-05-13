@@ -1926,11 +1926,28 @@ def admin_contested():
     from engines.contest_engine import compute_contested_summary, count_contested
     results_db  = read_json("results.json")
     athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
-    summaries = compute_contested_summary(results_db["data"], athletes_by_id)
+    rounds_by_id   = {r["id"]: r for r in read_json("rounds.json")["data"]}
+    summaries = compute_contested_summary(results_db["data"], athletes_by_id, rounds_by_id)
     return jsonify({
         "contested": summaries,
         "count": count_contested(results_db["data"]),
     })
+
+
+@app.route("/api/results/<result_id>/admin-confirm", methods=["POST"])
+@require_admin
+def admin_confirm_result(result_id):
+    """Admin força confirmação de um resultado pendente de confirmação pelos atletas."""
+    results_db = read_json("results.json")
+    result = next((r for r in results_db["data"] if r["id"] == result_id), None)
+    if not result:
+        return jsonify({"error": "Resultado não encontrado"}), 404
+    if result.get("status") not in ("pending_confirmation", "pending"):
+        return jsonify({"error": f"Resultado com status '{result.get('status')}' não pode ser forçado"}), 400
+    result["status"] = "confirmed"
+    result["admin_confirmed_at"] = now_iso()
+    write_json("results.json", results_db)
+    return jsonify({"ok": True, "result_id": result_id})
 
 
 # ---------------------------------------------------------------------------

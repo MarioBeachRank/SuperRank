@@ -18,17 +18,21 @@ def can_override(result: dict) -> bool:
 def compute_contested_summary(
     results: list[dict],
     athletes_by_id: dict,
+    rounds_by_id: dict | None = None,
 ) -> list[dict]:
     """
     Retorna lista de resultados contestados enriquecidos com nomes e detalhes.
 
-    Cada entrada: {result_id, round_id, season_id, cat, group_idx,
+    Cada entrada: {result_id, round_id, round_number, round_start_date,
+                   round_end_date, season_id, cat, group_idx,
                    group: [{athlete_id, nome, score, confirmation}],
                    contesters: [nome, ...]}
     """
     contested = [r for r in results if r.get("status") == "contested"]
+    rounds_by_id = rounds_by_id or {}
     summaries = []
     for r in contested:
+        rnd = rounds_by_id.get(r.get("round_id") or "", {})
         group_detail = [
             {
                 "athlete_id": aid,
@@ -55,16 +59,19 @@ def compute_contested_summary(
             for aid, c in r.get("contests", {}).items()
         ]
         summaries.append({
-            "result_id": r["id"],
-            "round_id": r.get("round_id"),
-            "season_id": r.get("season_id"),
-            "cat": r.get("cat"),
-            "group_idx": r.get("group_idx", 0),
-            "group": group_detail,
-            "contesters": contesters,
-            "contests": contests_detail,
+            "result_id":        r["id"],
+            "round_id":         r.get("round_id"),
+            "round_number":     rnd.get("round_number"),
+            "round_start_date": rnd.get("start_date"),
+            "round_end_date":   rnd.get("end_date") or rnd.get("target_date"),
+            "season_id":        r.get("season_id"),
+            "cat":              r.get("cat"),
+            "group_idx":        r.get("group_idx", 0),
+            "group":            group_detail,
+            "contesters":       contesters,
+            "contests":         contests_detail,
             "confirmations_count": len(r.get("confirmations", {})),
-            "group_size": len(r.get("group", [])),
+            "group_size":       len(r.get("group", [])),
         })
     return summaries
 

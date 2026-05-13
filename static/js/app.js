@@ -1160,7 +1160,7 @@ function paintAtletasTable(content) {
         <thead>
           <tr>
             <th>Nome</th><th>Tipo</th><th>Categoria</th>
-            <th>Confirmado</th><th>Status</th><th></th>
+            <th>Telefone</th><th>Cadastro</th><th>Confirmado</th><th>Status</th><th></th>
           </tr>
         </thead>
         <tbody id="atletas-tbody">
@@ -1316,7 +1316,14 @@ function renderAtletasRows(athletes) {
     }).join('');
   }
 
-  return athletes.map(a => `
+  return athletes.map(a => {
+    const phoneDisplay = a.telefone
+      ? `<span style="font-size:12px;font-family:monospace;">${escapeHtml(fmtPhone(a.telefone))}</span>`
+      : '<span style="color:var(--color-text-muted);font-size:11px;">—</span>';
+    const cadastroDisplay = a.created_at
+      ? `<span style="font-size:12px;">${fmtDate(a.created_at.slice(0,10))}</span>`
+      : '—';
+    return `
     <tr>
       <td style="font-weight:500;">
         ${a.apelido ? escapeHtml(a.apelido) : escapeHtml(a.nome)}
@@ -1325,6 +1332,8 @@ function renderAtletasRows(athletes) {
       </td>
       <td>${typeBadge(a.type)}</td>
       <td>${catLabel(a.current_category)}</td>
+      <td>${phoneDisplay}</td>
+      <td>${cadastroDisplay}</td>
       <td>${a.admin_confirmed ? '<span style="color:#2A7A3A;">✓</span>' : '<span style="color:#BA7517;">Pendente</span>'}</td>
       <td>${statusBadge(a.status)}</td>
       <td style="text-align:right;white-space:nowrap;">
@@ -1333,7 +1342,8 @@ function renderAtletasRows(athletes) {
         <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" style="margin-left:4px;" title="PIN temporário">PIN</button>
         <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;margin-left:4px;">Excluir</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function openAtletaModal(atleta = null) {
@@ -3842,8 +3852,17 @@ async function renderAdminResultados(content) {
         <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
       </div>
     </div>
-    <div id="resultados-cat-tabs" class="cat-tabs" style="padding:0 var(--space-md) var(--space-sm);">
-      <button class="cat-tab active" data-filter="all">Todas</button>
+    <div class="resultados-filter-bar">
+      <div id="resultados-cat-tabs" class="cat-tabs">
+        <button class="cat-tab active" data-filter="all">Todas</button>
+      </div>
+      <div id="resultados-status-tabs" class="res-status-tabs">
+        <button class="res-status-tab active" data-status="all">Todos</button>
+        <button class="res-status-tab" data-status="not_launched">Não lançados</button>
+        <button class="res-status-tab" data-status="pending_confirmation">Aguard. confirm.</button>
+        <button class="res-status-tab" data-status="contested">Contestados</button>
+        <button class="res-status-tab" data-status="confirmed">Confirmados</button>
+      </div>
     </div>
     <div id="resultados-body">
       <p class="placeholder-text">Carregando…</p>
@@ -3851,6 +3870,7 @@ async function renderAdminResultados(content) {
 
   const body = content.querySelector('#resultados-body');
   const tabsBar = content.querySelector('#resultados-cat-tabs');
+  const statusBar = content.querySelector('#resultados-status-tabs');
 
   if (!rounds.length) {
     body.innerHTML = `<div class="alert alert-info">Nenhuma rodada com sorteio realizado.</div>`;
@@ -3870,14 +3890,20 @@ async function renderAdminResultados(content) {
   });
 
   let activeCatFilter = 'all';
+  let activeStatusFilter = 'all';
 
-  function applyFilter(cat) {
-    activeCatFilter = cat;
-    tabsBar.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.filter === cat));
+  function applyFilter(cat, status) {
+    if (cat !== undefined) activeCatFilter = cat;
+    if (status !== undefined) activeStatusFilter = status;
+    tabsBar.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.filter === activeCatFilter));
+    statusBar.querySelectorAll('.res-status-tab').forEach(t => t.classList.toggle('active', t.dataset.status === activeStatusFilter));
+
     body.querySelectorAll('.group-card[data-cat]').forEach(card => {
-      card.style.display = (cat === 'all' || card.dataset.cat === cat) ? '' : 'none';
+      const catMatch = activeCatFilter === 'all' || card.dataset.cat === activeCatFilter;
+      const cardStatus = card.dataset.status || 'not_launched';
+      const statusMatch = activeStatusFilter === 'all' || cardStatus === activeStatusFilter;
+      card.style.display = (catMatch && statusMatch) ? '' : 'none';
     });
-    // Oculta cards de rodada que ficaram sem grupos visíveis
     body.querySelectorAll('.card[data-round-card]').forEach(card => {
       const hasVisible = [...card.querySelectorAll('.group-card[data-cat]')].some(g => g.style.display !== 'none');
       card.style.display = hasVisible ? '' : 'none';
@@ -3886,7 +3912,12 @@ async function renderAdminResultados(content) {
 
   tabsBar.addEventListener('click', e => {
     const btn = e.target.closest('.cat-tab');
-    if (btn) applyFilter(btn.dataset.filter);
+    if (btn) applyFilter(btn.dataset.filter, undefined);
+  });
+
+  statusBar.addEventListener('click', e => {
+    const btn = e.target.closest('.res-status-tab');
+    if (btn) applyFilter(undefined, btn.dataset.status);
   });
 
   // Renderiza painel por rodada
@@ -3922,6 +3953,7 @@ async function renderAdminResultados(content) {
           const group = groups[gi];
           const key = `${cat}-${gi}`;
           const existing = resultsByGroupKey[key];
+          const cardStatus = existing ? existing.status : 'not_launched';
           const statusLabel = existing
             ? { pending_confirmation: 'Aguard. confirmação', confirmed: 'Confirmado', contested: 'Contestado' }[existing.status] || existing.status
             : 'Não lançado';
@@ -3929,8 +3961,16 @@ async function renderAdminResultados(content) {
             ? { pending_confirmation: 'badge-pending', confirmed: 'badge-confirmed', contested: 'badge-contested' }[existing.status] || ''
             : 'badge-inativo';
 
+          const adminConfirmBtn = (existing && existing.status === 'pending_confirmation') ? `
+            <button class="btn btn-ghost btn-sm btn-admin-confirm"
+              data-rid="${existing.id}"
+              style="margin-left:6px;color:#7C3AED;"
+              title="Forçar confirmação sem aguardar todos os atletas">
+              ✓ Confirmar como ADM
+            </button>` : '';
+
           html += `
-            <div class="group-card" data-cat="${cat}" style="margin:var(--space-sm) var(--space-md);border:var(--border);border-radius:var(--radius-md);overflow:hidden;">
+            <div class="group-card" data-cat="${cat}" data-status="${cardStatus}" style="margin:var(--space-sm) var(--space-md);border:var(--border);border-radius:var(--radius-md);overflow:hidden;">
               <div class="group-card-header" style="display:flex;align-items:center;gap:8px;padding:8px var(--space-md);background:var(--color-bg);">
                 ${catLabel(cat)}
                 <span style="font-size:13px;font-weight:600;">Grupo ${gi + 1}</span>
@@ -3942,18 +3982,20 @@ async function renderAdminResultados(content) {
                   ${group.map(aid => `<span class="athlete-chip">${escapeHtml(athletesById[aid]?.nome || aid)}</span>`).join('')}
                 </div>
                 ${existing ? renderResultScores(existing, group, athletesById) : ''}
-                ${!existing || existing.status === 'contested' ? `
-                  <button class="btn btn-primary btn-sm btn-launch-result"
-                    data-round="${rnd.id}" data-cat="${cat}" data-gi="${gi}"
-                    data-group='${JSON.stringify(group)}'
-                    data-sets='${JSON.stringify((rnd.groups_sets?.[cat]?.[gi] || []))}'>
-                    ${existing ? 'Editar resultado' : 'Lançar resultado'}
-                  </button>` : ''}
-                ${existing && existing.status !== 'confirmed' ? `
-                  <button class="btn btn-ghost btn-sm btn-wo-result"
-                    data-round="${rnd.id}" data-cat="${cat}" data-gi="${gi}"
-                    data-group='${JSON.stringify(group)}'
-                    style="margin-left:6px;">WO</button>` : ''}
+                <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                  ${!existing || existing.status === 'contested' ? `
+                    <button class="btn btn-primary btn-sm btn-launch-result"
+                      data-round="${rnd.id}" data-cat="${cat}" data-gi="${gi}"
+                      data-group='${JSON.stringify(group)}'
+                      data-sets='${JSON.stringify((rnd.groups_sets?.[cat]?.[gi] || []))}'>
+                      ${existing ? 'Editar resultado' : 'Lançar resultado'}
+                    </button>` : ''}
+                  ${existing && existing.status !== 'confirmed' ? `
+                    <button class="btn btn-ghost btn-sm btn-wo-result"
+                      data-round="${rnd.id}" data-cat="${cat}" data-gi="${gi}"
+                      data-group='${JSON.stringify(group)}'>WO</button>` : ''}
+                  ${adminConfirmBtn}
+                </div>
               </div>
             </div>`;
         }
@@ -3961,7 +4003,7 @@ async function renderAdminResultados(content) {
       html += `</div>`;
     }
     body.innerHTML = html;
-    applyFilter(activeCatFilter);
+    applyFilter(activeCatFilter, activeStatusFilter);
     attachResultadosListeners(body, athletesById, renderRounds);
   };
 
@@ -4036,6 +4078,29 @@ function attachResultadosListeners(body, athletesById, refresh) {
     });
   });
 
+  // Forçar confirmação como ADM
+  body.querySelectorAll('.btn-admin-confirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const rid = btn.dataset.rid;
+      confirmModal(
+        'Confirmar como ADM',
+        'Forçar a confirmação deste resultado sem aguardar todos os atletas? O placar lançado será aceito como definitivo.',
+        async () => {
+          btn.disabled = true;
+          try {
+            await api(`/api/results/${rid}/admin-confirm`, { method: 'POST' });
+            showToast('Resultado confirmado pelo ADM.', 'success');
+            await refresh();
+          } catch (err) {
+            showToast('Erro: ' + err.message, 'error');
+            btn.disabled = false;
+          }
+        },
+        'Confirmar'
+      );
+    });
+  });
+
   // Resolver contestação
   body.querySelectorAll('.btn-override').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4106,15 +4171,39 @@ function openWoForm(roundId, cat, gi, group, athletesById, refresh) {
     `<option value="${aid}">${escapeHtml(athletesById[aid]?.nome || aid)}</option>`
   ).join('');
 
+  function buildWoPreview(absentId) {
+    const present = group.filter(aid => aid !== absentId);
+    const absentName = escapeHtml(athletesById[absentId]?.nome || absentId);
+    const presentRows = present.map(aid =>
+      `<div class="wo-preview-row wo-present">
+         <span>${escapeHtml(athletesById[aid]?.nome || aid)}</span>
+         <span class="wo-pts">9 pts (3×3)</span>
+       </div>`
+    ).join('');
+    return `
+      <div class="wo-preview-box">
+        ${presentRows}
+        <div class="wo-preview-row wo-absent">
+          <span>${absentName} <em style="font-size:11px;">(ausente)</em></span>
+          <span class="wo-pts wo-zero">0 pts</span>
+        </div>
+      </div>`;
+  }
+
   openModal(
-    `WO Total — Cat ${cat} · Grupo ${gi + 1}`,
-    `<p style="margin-bottom:12px;">Selecione o atleta ausente:</p>
-     <select id="wo-absent" class="field-input">${options}</select>
-     <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px;">Art. 10.1: atleta ausente recebe 0pts; demais recebem 9pts (3×3).</p>
+    `WO — Cat ${cat} · Grupo ${gi + 1}`,
+    `<p style="margin-bottom:10px;font-size:13px;">Selecione o atleta <strong>ausente</strong>:</p>
+     <select id="wo-absent" class="field-input" style="margin-bottom:12px;">${options}</select>
+     <div id="wo-preview">${buildWoPreview(group[0])}</div>
+     <p style="font-size:11px;color:var(--color-text-muted);margin-top:10px;">Art. 10.1: ausente recebe 0 pts; demais recebem 9 pts (3 sets × 3 pts).</p>
      <p id="wo-error" class="field-error hidden"></p>`,
     `<button id="btn-wo-confirmar" class="btn btn-primary">Aplicar WO</button>
      <button id="btn-wo-cancelar" class="btn btn-ghost">Cancelar</button>`
   );
+
+  document.getElementById('wo-absent').addEventListener('change', e => {
+    document.getElementById('wo-preview').innerHTML = buildWoPreview(e.target.value);
+  });
 
   document.getElementById('btn-wo-cancelar').addEventListener('click', closeModal);
   document.getElementById('btn-wo-confirmar').addEventListener('click', async () => {
@@ -6176,13 +6265,17 @@ async function renderAdminContestacoes(content) {
         ${c.scores ? `<p style="font-size:11px;color:var(--color-text-muted);margin:8px 0 2px;">Placar proposto:</p>${contestedScoresTable(c.scores, item.group)}` : ''}
       </div>`).join('');
 
+    const roundLabel = item.round_number
+      ? `Rodada ${item.round_number}${item.round_start_date ? ` · ${fmtDate(item.round_start_date)}–${fmtDate(item.round_end_date)}` : ''}`
+      : `Rodada ${escapeHtml((item.round_id || '').slice(0, 8))}…`;
+
     return `
       <div class="contested-card" data-result-id="${escapeHtml(item.result_id)}">
         <div class="contested-card-header">
           <span class="contested-card-title">
             ${catLabel(item.cat)} &nbsp;Grupo ${item.group_idx + 1}
           </span>
-          <span class="contested-card-meta">Rodada ${escapeHtml(item.round_id)}</span>
+          <span class="contested-card-meta">${roundLabel}</span>
         </div>
         <p style="font-size:11px;color:var(--color-text-muted);margin:8px 12px 2px;">Placar lançado:</p>
         <div style="padding:0 12px 8px;">${originalScoresTable(item.group)}</div>
