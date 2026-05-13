@@ -286,6 +286,7 @@ const PAGE_TITLES = {
   'admin/anual':     'Anual — SuperRank',
   'admin/relatorio':     'Relatório — SuperRank',
   'admin/contestacoes':  'Contestações — SuperRank',
+  'admin/auditoria':     'Auditoria — SuperRank',
   'publico/ranking': 'Ranking — SuperRank',
   'publico/grupos':  'Grupos — SuperRank',
   'publico/resultados': 'Resultados — SuperRank',
@@ -951,6 +952,9 @@ async function renderAdmin(sub) {
       break;
     case 'contestacoes':
       await renderAdminContestacoes(content);
+      break;
+    case 'auditoria':
+      await renderAdminAuditoria(content);
       break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela <code>#admin/${sub}</code> disponível em sprint futuro.</p>`;
@@ -1718,10 +1722,16 @@ async function renderAdminTemporadas(content) {
                 <td style="font-size:12px;">${s.start_date} → ${s.end_date}</td>
                 <td>${s.rounds_total}</td>
                 <td>${s.round_duration_days || 10}</td>
-                <td style="text-align:right;white-space:nowrap;">
+                <td style="text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end;">
+                  <button class="btn btn-ghost btn-sm btn-editar-temporada"
+                    data-id="${s.id}" data-nome="${escapeHtml(s.name)}"
+                    data-start="${s.start_date || ''}" data-end="${s.end_date || ''}"
+                    data-rounds="${s.rounds_total}" data-days="${s.round_duration_days || 10}">
+                    Editar
+                  </button>
                   ${s.status === 'pending'
                     ? `<button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#D94040;">Excluir</button>`
-                    : '—'}
+                    : ''}
                 </td>
               </tr>`).join('')}
           </tbody>
@@ -1744,6 +1754,68 @@ async function renderAdminTemporadas(content) {
           btn.disabled = false;
           btn.textContent = 'Excluir';
         }
+      });
+    });
+
+    content.querySelectorAll('.btn-editar-temporada').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id     = btn.dataset.id;
+        const nome   = btn.dataset.nome;
+        const start  = btn.dataset.start;
+        const end    = btn.dataset.end;
+        const rounds = btn.dataset.rounds;
+        const days   = btn.dataset.days;
+
+        openModal('Editar Temporada', `
+          <div class="form-group">
+            <label class="field-label">Nome</label>
+            <input id="edit-s-name" class="field-input" value="${escapeHtml(nome)}">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="field-label">Início</label>
+              <input id="edit-s-start" type="date" class="field-input" value="${start}">
+            </div>
+            <div class="form-group">
+              <label class="field-label">Fim</label>
+              <input id="edit-s-end" type="date" class="field-input" value="${end}">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="field-label">Nº de Rodadas</label>
+              <input id="edit-s-rounds" type="number" min="1" max="20" class="field-input" value="${rounds}">
+            </div>
+            <div class="form-group">
+              <label class="field-label">Dias por Rodada</label>
+              <input id="edit-s-days" type="number" min="1" max="60" class="field-input" value="${days}">
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--color-text-muted);margin-top:4px;">
+            Editar uma temporada ativa afeta sorteios e ranking. Confirme com cuidado.
+          </p>`,
+          `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+           <button class="btn btn-primary" id="btn-salvar-season" style="margin-left:8px;">Salvar alterações</button>`
+        );
+        document.getElementById('btn-salvar-season').addEventListener('click', async () => {
+          const body = {
+            name:                document.getElementById('edit-s-name').value.trim(),
+            start_date:          document.getElementById('edit-s-start').value,
+            end_date:            document.getElementById('edit-s-end').value,
+            rounds_total:        parseInt(document.getElementById('edit-s-rounds').value),
+            round_duration_days: parseInt(document.getElementById('edit-s-days').value),
+          };
+          if (!body.name) { showToast('Nome é obrigatório', 'error'); return; }
+          try {
+            const updated = await api(`/api/seasons/${id}`, { method: 'PUT', body });
+            seasons = seasons.map(s => s.id === id ? updated : s);
+            closeModal();
+            showToast('Temporada atualizada.', 'success');
+            paint();
+          } catch (err) {
+            showToast('Erro: ' + err.message, 'error');
+          }
+        });
       });
     });
   };
@@ -2198,6 +2270,29 @@ async function renderAdminRodada(content) {
       });
     });
 
+    // Reopen closed round buttons
+    content.querySelectorAll('.btn-reopen-round').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const roundId = btn.dataset.roundId;
+        confirmModal(
+          'Reabrir Rodada',
+          'Reabrir esta rodada? O status voltará para "Em andamento" e novos resultados poderão ser lançados. Resultados já confirmados são mantidos.',
+          async () => {
+            btn.disabled = true; btn.textContent = 'Reabrindo…';
+            try {
+              await api(`/api/rounds/${roundId}/reopen`, { method: 'POST', body: {} });
+              showToast('Rodada reaberta com sucesso.', 'success');
+              await loadAndPaint(season);
+            } catch (err) {
+              showToast(`Erro: ${err.message}`, 'error');
+              btn.disabled = false; btn.innerHTML = '🔓 Reabrir Rodada';
+            }
+          },
+          'Reabrir'
+        );
+      });
+    });
+
     // Acordeon dos rounds
     content.querySelectorAll('.round-card-header').forEach(header => {
       header.addEventListener('click', async () => {
@@ -2311,6 +2406,14 @@ function renderRoundCard(round, season) {
           <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
             <button class="btn btn-ghost btn-sm btn-authorize-draw" data-round-id="${round.id}">
               ✓ Autorizar Sorteio da Próxima Rodada
+            </button>
+          </div>` : ''}
+        ${round.status === 'closed' ? `
+          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
+            <button class="btn btn-ghost btn-sm btn-reopen-round" data-round-id="${round.id}"
+              style="color:#BA7517;"
+              title="Reabrir esta rodada para permitir correções">
+              🔓 Reabrir Rodada
             </button>
           </div>` : ''}
       </div>
@@ -4434,6 +4537,11 @@ async function renderAdminFechamento(content) {
         <h1 class="section-title">Fechamento de Temporada</h1>
         <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
       </div>
+      <a href="/api/seasons/${activeSeason.id}/ranking/export.csv"
+         class="btn btn-ghost btn-sm"
+         title="Baixar ranking completo em CSV">
+        ⬇ Exportar CSV
+      </a>
     </div>
 
     ${openRoundsBanner}
@@ -6476,6 +6584,103 @@ async function renderAdminContestacoes(content) {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 15: Log de Auditoria
+// ---------------------------------------------------------------------------
+
+async function renderAdminAuditoria(content) {
+  const ACTION_LABELS = {
+    result_admin_confirm: 'Confirmação forçada de resultado',
+    result_override:      'Override de contestação',
+    result_wo_applied:    'WO aplicado',
+    season_closed:        'Temporada encerrada',
+    round_reopened:       'Rodada reaberta',
+    round_closed:         'Rodada encerrada manualmente',
+    season_edited:        'Temporada editada',
+    athlete_confirmed:    'Cadastro de atleta confirmado',
+    athlete_category_set: 'Categoria de atleta definida',
+  };
+  const ACTION_ICONS = {
+    result_admin_confirm: '✓',
+    result_override:      '⚖',
+    result_wo_applied:    '🚫',
+    season_closed:        '🔒',
+    round_reopened:       '🔓',
+    round_closed:         '✅',
+    season_edited:        '✏️',
+    athlete_confirmed:    '👤',
+    athlete_category_set: '🗂',
+  };
+
+  content.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">Auditoria</h1>
+        <p class="section-subtitle">Histórico de ações administrativas</p>
+      </div>
+      <button id="btn-refresh-audit" class="btn btn-ghost btn-sm">↺ Atualizar</button>
+    </div>
+    <div id="audit-body"><p class="placeholder-text">Carregando…</p></div>`;
+
+  const body = content.querySelector('#audit-body');
+
+  async function loadAndPaint() {
+    body.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+    let entries = [];
+    try { entries = await api('/api/admin/audit?limit=200'); } catch (err) {
+      body.innerHTML = `<div class="alert alert-error">Erro ao carregar: ${escapeHtml(err.message)}</div>`;
+      return;
+    }
+
+    if (!entries.length) {
+      body.innerHTML = `
+        <div style="text-align:center;padding:48px 20px;">
+          <div style="font-size:40px;margin-bottom:12px;">📋</div>
+          <p style="color:var(--color-text-muted);">Nenhuma ação registrada ainda.</p>
+        </div>`;
+      return;
+    }
+
+    const rows = entries.map(e => {
+      const icon  = ACTION_ICONS[e.action]  || '•';
+      const label = ACTION_LABELS[e.action] || e.action;
+      const det   = Object.entries(e.details || {})
+        .filter(([k]) => !['result_id','round_id','season_id'].includes(k))
+        .map(([k, v]) => `${k}: <strong>${escapeHtml(String(v))}</strong>`)
+        .join(' · ');
+      const ts = e.created_at
+        ? new Date(e.created_at).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' })
+        : '—';
+      return `<tr>
+        <td style="color:var(--color-text-muted);font-size:12px;white-space:nowrap;">${ts}</td>
+        <td style="font-size:16px;text-align:center;">${icon}</td>
+        <td style="font-weight:500;">${escapeHtml(label)}</td>
+        <td style="font-size:12px;color:var(--color-text-muted);">${det}</td>
+        <td style="font-size:12px;color:var(--color-text-muted);">${escapeHtml(e.actor || 'admin')}</td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = `
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table class="data-table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Quando</th>
+              <th></th>
+              <th>Ação</th>
+              <th>Detalhes</th>
+              <th>Por</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  content.querySelector('#btn-refresh-audit').addEventListener('click', loadAndPaint);
+  await loadAndPaint();
 }
 
 // ---------------------------------------------------------------------------

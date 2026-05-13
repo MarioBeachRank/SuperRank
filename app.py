@@ -65,6 +65,15 @@ def write_settings(settings: dict):
         json.dump(settings, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
 
+def log_audit(action: str, details: dict = None):
+    """Registra uma ação administrativa no log de auditoria."""
+    from engines.audit_engine import build_entry
+    actor = session.get("admin_name", "admin")
+    db = read_json("audit.json")
+    db["data"].append(build_entry(action, actor, details or {}))
+    write_json("audit.json", db)
+
+
 def _create_notification(athlete_id: str, ntype: str, title: str, body: str, link: str = None):
     db = read_json("notifications.json")
     notif = {
@@ -466,6 +475,11 @@ def seasons_update(season_id):
             season["end_date"] = (datetime.strptime(_sd, "%Y-%m-%d") + _td3(days=_rt * _rd - 1)).strftime("%Y-%m-%d")
 
     write_json("seasons.json", db)
+    log_audit("season_edited", {
+        "season_id": season_id,
+        "season_name": season.get("name"),
+        "changed_fields": list(body.keys()),
+    })
     return jsonify(season)
 
 
@@ -1307,6 +1321,12 @@ def override_result(result_id):
         return jsonify({"error": "action deve ser 'confirm' ou 'edit'"}), 400
 
     write_json("results.json", results_db)
+    log_audit("result_override", {
+        "result_id": result_id,
+        "action": action,
+        "cat": result.get("cat"),
+        "group_idx": result.get("group_idx"),
+    })
 
     # Notify group about contest resolution
     try:
@@ -1906,6 +1926,12 @@ def fechamento_apply(season_id):
         "applied_at": now_iso(),
     }
     write_json("seasons.json", seasons_db)
+    log_audit("season_closed", {
+        "season_id": season_id,
+        "season_name": season.get("name"),
+        "promotions": len(movements["promotions"]),
+        "relegations": len(movements["relegations"]),
+    })
 
     # Atualiza category_history de cada atleta que se moveu
     athletes_db = read_json("athletes.json")  # re-read após leitura anterior
@@ -2049,6 +2075,12 @@ def admin_confirm_result(result_id):
     result["status"] = "confirmed"
     result["admin_confirmed_at"] = now_iso()
     write_json("results.json", results_db)
+    log_audit("result_admin_confirm", {
+        "result_id": result_id,
+        "cat": result.get("cat"),
+        "group_idx": result.get("group_idx"),
+        "round_id": result.get("round_id"),
+    })
     return jsonify({"ok": True, "result_id": result_id})
 
 
@@ -2206,6 +2238,89 @@ def admin_export():
         payload,
         mimetype="application/json",
         headers={"Content-Disposition": f"attachment; filename=superrank_export_{now_iso()[:10]}.json"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 15 — Log de auditoria
+# ---------------------------------------------------------------------------
+
+@app.route("/api/admin/audit")
+@require_admin
+def admin_audit_log():
+    """Retorna as últimas entradas do log de auditoria."""
+    from engines.audit_engine import recent_entries
+    limit = min(int(request.args.get("limit", 200)), 500)
+    action_filter = request.args.get("action")
+    db = read_json("audit.json")
+    entries = recent_entries(db["data"], limit=limit)
+    if action_filter:
+        entries = [e for e in entries if e.get("action") == action_filter]
+    return jsonify(entries)
+
+
+@app.route("/api/rounds/<round_id>/reopen", methods=["POST"])
+@require_admin
+def round_reopen(round_id):
+    """Reabre uma rodada encerrada para correções."""
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd.get("status") != "closed":
+        return jsonify({"error": "Apenas rodadas encerradas podem ser reabertas"}), 400
+    rnd["status"] = "in_progress"
+    rnd["reopened_at"] = now_iso()
+    write_json("rounds.json", rounds_db)
+    log_audit("round_reopened", {
+        "round_id": round_id,
+        "round_number": rnd.get("round_number"),
+        "season_id": rnd.get("season_id"),
+    })
+    athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
+    return jsonify(_enrich_round(rnd, athletes_by_id))
+
+
+@app.route("/api/seasons/<season_id>/ranking/export.csv")
+@require_admin
+def ranking_export_csv(season_id):
+    """Exporta o ranking da temporada como CSV."""
+    from engines.ranking_engine import compute_ranking
+    import csv, io
+
+    seasons_db = read_json("seasons.json")
+    season = next((s for s in seasons_db["data"] if s["id"] == season_id), None)
+    if not season:
+        return jsonify({"error": "Temporada não encontrada"}), 404
+
+    athletes_db = read_json("athletes.json")
+    results_db  = read_json("results.json")
+    cat_filter  = request.args.get("cat")
+    categories  = [cat_filter] if cat_filter else CATEGORIES
+
+    category_setup = season.get("category_setup", {})
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Categoria", "Posição", "Nome", "Pontos", "Sets Vencidos",
+                     "Games Ganhos", "Games Perdidos", "Saldo", "Partidas"])
+
+    for cat in categories:
+        titular_ids = category_setup.get(cat, {}).get("titular_ids", [])
+        athletes_in_cat = [a for a in athletes_db["data"] if a["id"] in titular_ids]
+        if not athletes_in_cat:
+            continue
+        ranking = compute_ranking(athletes_in_cat, results_db["data"], category=cat, season_id=season_id)
+        for r in ranking:
+            writer.writerow([
+                cat, r["rank"], r["nome"], r["points"], r["wins"],
+                r["games_won"], r["games_lost"], r["saldo"], r["results_count"],
+            ])
+
+    from flask import Response
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=ranking_{season_id[:8]}_{now_iso()[:10]}.csv"},
     )
 
 
