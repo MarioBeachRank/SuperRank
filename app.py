@@ -2374,7 +2374,13 @@ def mesa_profile_pin():
 @app.route("/api/config")
 def public_config():
     s = read_settings()
-    return jsonify({"admin_whatsapp": s.get("admin_whatsapp", ""), "app_name": "SuperRank"})
+    return jsonify({
+        "admin_whatsapp": s.get("admin_whatsapp", ""),
+        "app_name":       s.get("club_name", "SuperRank"),
+        "club_name":      s.get("club_name", "SuperRank"),
+        "court_location": s.get("court_location", ""),
+        "app_url":        s.get("app_url", ""),
+    })
 
 
 @app.route("/api/admin/settings", methods=["GET", "PUT"])
@@ -2384,10 +2390,96 @@ def admin_settings_route():
         return jsonify(read_settings())
     body = request.get_json(silent=True) or {}
     s = read_settings()
-    if "admin_whatsapp" in body:
-        s["admin_whatsapp"] = str(body["admin_whatsapp"])
+    for field in ("admin_whatsapp", "club_name", "court_location", "app_url"):
+        if field in body:
+            s[field] = str(body[field])
     write_settings(s)
     return jsonify(s)
+
+
+@app.route("/api/seasons/<season_id>/schedule")
+def season_schedule(season_id):
+    """Cronograma de rodadas de uma temporada (público)."""
+    seasons_db = read_json("seasons.json")
+    season = next((s for s in seasons_db["data"] if s["id"] == season_id), None)
+    if not season:
+        return jsonify({"error": "Temporada não encontrada"}), 404
+    rounds_db = read_json("rounds.json")
+    rounds = [
+        r for r in rounds_db["data"]
+        if r.get("season_id") == season_id and r.get("status") != "cancelled"
+    ]
+    schedule = [
+        {
+            "round_id":     r["id"],
+            "round_number": r.get("round_number"),
+            "start_date":   r.get("start_date"),
+            "end_date":     r.get("end_date") or r.get("target_date"),
+            "status":       r.get("status"),
+        }
+        for r in sorted(rounds, key=lambda x: x.get("round_number") or 0)
+    ]
+    return jsonify({"rounds_total": season.get("rounds_total", 0), "schedule": schedule})
+
+
+@app.route("/api/seasons/<season_id>/comms-checklist")
+@require_admin
+def season_comms_checklist(season_id):
+    """Lista de atletas com situação pendente numa rodada, para comunicação."""
+    round_id = request.args.get("round_id")
+    cat_filter = request.args.get("cat")
+
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None) if round_id else None
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+
+    results_db = read_json("results.json")
+    slots_db   = read_json("slots.json")
+    athletes_db = read_json("athletes.json")
+    athletes_by_id = {a["id"]: a for a in athletes_db["data"]}
+
+    round_results = {
+        f"{r.get('cat')}-{r.get('group_idx')}": r
+        for r in results_db["data"] if r.get("round_id") == round_id
+    }
+    slots_by_athlete = {
+        s["athlete_id"]: s["slots"]
+        for s in slots_db["data"] if s["round_id"] == round_id
+    }
+
+    checklist = []
+    for cat, groups in rnd.get("groups", {}).items():
+        if cat_filter and cat != cat_filter:
+            continue
+        for gi, group in enumerate(groups):
+            result = round_results.get(f"{cat}-{gi}")
+            for aid in group:
+                athlete = athletes_by_id.get(aid, {})
+                has_slots = bool(slots_by_athlete.get(aid))
+                result_status = result.get("status") if result else None
+                pending_confirm = (
+                    result_status == "pending_confirmation"
+                    and result.get("confirmations", {}).get(aid) not in ("confirmed", "contested")
+                ) if result else False
+
+                issues = []
+                if not has_slots:
+                    issues.append("sem_slots")
+                if pending_confirm:
+                    issues.append("resultado_pendente")
+
+                if issues:
+                    checklist.append({
+                        "athlete_id":  aid,
+                        "nome":        athlete.get("nome", aid),
+                        "telefone":    athlete.get("telefone", ""),
+                        "cat":         cat,
+                        "group_idx":   gi,
+                        "issues":      issues,
+                    })
+
+    return jsonify({"round_id": round_id, "checklist": checklist})
 
 
 # ---------------------------------------------------------------------------

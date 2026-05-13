@@ -287,6 +287,7 @@ const PAGE_TITLES = {
   'admin/relatorio':     'Relatório — SuperRank',
   'admin/contestacoes':  'Contestações — SuperRank',
   'admin/auditoria':     'Auditoria — SuperRank',
+  'admin/config':        'Configurações — SuperRank',
   'publico/ranking': 'Ranking — SuperRank',
   'publico/grupos':  'Grupos — SuperRank',
   'publico/resultados': 'Resultados — SuperRank',
@@ -427,7 +428,15 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
-window.addEventListener('load', route);
+window.addEventListener('load', () => {
+  route();
+  // Pre-load public config for use in comms messages
+  api('/api/config').then(cfg => {
+    window._appUrl = cfg.app_url || '';
+    window._clubName = cfg.club_name || 'SuperRank';
+    window._adminPhone = cfg.admin_whatsapp || '';
+  }).catch(() => {});
+});
 
 // ---------------------------------------------------------------------------
 // Tela: Login
@@ -956,6 +965,9 @@ async function renderAdmin(sub) {
     case 'auditoria':
       await renderAdminAuditoria(content);
       break;
+    case 'config':
+      await renderAdminConfig(content);
+      break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela <code>#admin/${sub}</code> disponível em sprint futuro.</p>`;
   }
@@ -1113,42 +1125,7 @@ async function renderAdminDashboard(content) {
 
 async function renderAdminAtletas(content) {
   state.athletes = await api('/api/athletes');
-
-  // Settings card — admin WhatsApp
-  let settings = {};
-  try { settings = await api('/api/admin/settings'); } catch (_) {}
-
-  const settingsCard = `
-    <div class="card" style="margin-bottom:16px;">
-      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
-         color:var(--color-text-muted);margin-bottom:10px;">⚙️ Configurações</p>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-        <div style="flex:1;min-width:200px;">
-          <label class="field-label" style="font-size:11px;">WhatsApp do Admin (com DDI, ex: 5575999998888)</label>
-          <input id="input-admin-wa" class="field-input" type="tel" inputmode="numeric"
-            placeholder="5575999998888" value="${escapeHtml(settings.admin_whatsapp || '')}" />
-        </div>
-        <button id="btn-save-admin-wa" class="btn btn-primary btn-sm">Salvar</button>
-      </div>
-      <p id="admin-wa-msg" class="hidden" style="font-size:12px;margin-top:6px;"></p>
-    </div>`;
-
-  // Inject settings card before the athlete table
-  const tmpDiv = document.createElement('div');
-  tmpDiv.innerHTML = settingsCard;
   paintAtletasTable(content);
-  content.insertBefore(tmpDiv.firstElementChild, content.firstElementChild);
-
-  content.querySelector('#btn-save-admin-wa')?.addEventListener('click', async () => {
-    const msgEl = content.querySelector('#admin-wa-msg');
-    const val = content.querySelector('#input-admin-wa').value.replace(/\D/g, '');
-    try {
-      await api('/api/admin/settings', { method: 'PUT', body: { admin_whatsapp: val } });
-      msgEl.textContent = '✓ Salvo!'; msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
-    } catch (err) {
-      msgEl.textContent = `Erro: ${err.message}`; msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden');
-    }
-  });
 }
 
 function paintAtletasTable(content) {
@@ -2270,6 +2247,23 @@ async function renderAdminRodada(content) {
       });
     });
 
+    // Comunicação em massa por categoria
+    content.querySelectorAll('.btn-comms-cat').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const roundId = btn.dataset.roundId;
+        const cat     = btn.dataset.cat;
+        btn.disabled = true; btn.textContent = 'Carregando…';
+        try {
+          const data = await api(`/api/seasons/${season.id}/comms-checklist?round_id=${roundId}&cat=${cat}`);
+          openCommsModal(roundId, cat, data.checklist);
+        } catch (err) {
+          showToast('Erro: ' + err.message, 'error');
+        } finally {
+          btn.disabled = false; btn.innerHTML = '📢 Comunicar';
+        }
+      });
+    });
+
     // Reopen closed round buttons
     content.querySelectorAll('.btn-reopen-round').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -2401,6 +2395,14 @@ function renderRoundCard(round, season) {
             ${cats.map((cat, i) => `
               <div class="cat-tab-content ${i === 0 ? 'active' : ''}" data-cat-content="${cat}">
                 ${renderGroupsGrid(cat, round)}
+                ${round.status !== 'closed' && round.status !== 'cancelled' ? `
+                  <div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);">
+                    <button class="btn btn-ghost btn-sm btn-comms-cat"
+                      data-round-id="${round.id}" data-cat="${cat}"
+                      style="color:var(--color-text-muted);font-size:12px;">
+                      📢 Comunicar
+                    </button>
+                  </div>` : ''}
               </div>`).join('')}`}
         ${canAuthorize ? `
           <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
@@ -2843,6 +2845,8 @@ async function renderMesaHome(content, ctx) {
           ${round.deadline_slots ? `<p style="font-size:12px;color:#BA7517;">Prazo slots: ${round.deadline_slots}</p>` : ''}
         </div>` : `<p class="placeholder-text">Nenhuma rodada criada ainda.</p>`}
 
+      <div id="mesa-schedule-block" style="margin-bottom:16px;"></div>
+
       ${pendencias.length ? `
         <div style="margin-bottom:16px;">
           <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">Pendências</p>
@@ -2876,6 +2880,33 @@ async function renderMesaHome(content, ctx) {
         </a>
       </div>
     </div>`;
+
+  // Load round schedule asynchronously
+  if (season) {
+    api(`/api/seasons/${season.id}/schedule`).then(data => {
+      const block = content.querySelector('#mesa-schedule-block');
+      if (!block || !data.schedule || !data.schedule.length) return;
+      const STATUS_LABEL = { pending: 'Pendente', scheduled: 'Agendada', in_progress: 'Em andamento', closed: 'Encerrada' };
+      const STATUS_COLOR = { pending: 'var(--color-text-muted)', scheduled: '#22C55E', in_progress: 'var(--color-gold)', closed: 'var(--color-text-muted)' };
+      const rows = data.schedule.map(r => {
+        const label = STATUS_LABEL[r.status] || r.status;
+        const color = STATUS_COLOR[r.status] || 'var(--color-text-muted)';
+        const period = r.start_date && r.end_date ? `${fmtDate(r.start_date)} – ${fmtDate(r.end_date)}` : r.end_date ? fmtDate(r.end_date) : '—';
+        return `<div class="sched-row${r.status === 'closed' ? ' sched-closed' : r.status === 'in_progress' ? ' sched-active' : ''}">
+          <span class="sched-num">R${r.round_number}</span>
+          <span class="sched-period">${period}</span>
+          <span class="sched-status" style="color:${color};">${label}</span>
+        </div>`;
+      }).join('');
+      block.innerHTML = `
+        <div class="card" style="padding:12px 16px;">
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">
+            Calendário de Rodadas
+          </p>
+          <div class="sched-list">${rows}</div>
+        </div>`;
+    }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -3042,9 +3073,19 @@ async function renderMesaNotificacoes(content) {
     deadline_reminder: '⏰',
   };
 
+  const unreadCount = notifications.filter(n => !n.read).length;
+
   const header = `
     <div class="section-header">
-      <h1 class="section-title">Notificações</h1>
+      <div>
+        <h1 class="section-title">Notificações</h1>
+        ${unreadCount > 0 ? `<p class="section-subtitle">${unreadCount} não lida${unreadCount !== 1 ? 's' : ''}</p>` : ''}
+      </div>
+      ${unreadCount > 0
+        ? `<button id="btn-mark-all-read" class="btn btn-ghost btn-sm" style="font-size:12px;">
+             ✓ Marcar todas como lidas
+           </button>`
+        : ''}
     </div>`;
 
   if (!notifications.length) {
@@ -3073,6 +3114,17 @@ async function renderMesaNotificacoes(content) {
   }).join('');
 
   content.innerHTML = header + `<div class="notif-list">${items}</div>`;
+
+  content.querySelector('#btn-mark-all-read')?.addEventListener('click', async () => {
+    try {
+      await api('/api/mesa/notifications/read', { method: 'PUT' });
+      const badge = document.getElementById('notif-badge');
+      if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
+      await renderMesaNotificacoes(content);
+    } catch (err) {
+      showToast('Erro: ' + err.message, 'error');
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -4302,6 +4354,113 @@ function openImpactModal(impact) {
 
   document.body.appendChild(overlay);
   overlay.querySelector('#closeImpactModal').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+function openCommsModal(roundId, cat, checklist) {
+  const ISSUE_LABELS = {
+    sem_slots:        { icon: '⏰', text: 'Sem slots marcados' },
+    resultado_pendente:{ icon: '📋', text: 'Resultado pendente de confirmação' },
+  };
+  const SENT_KEY = `comms_sent_${roundId}`;
+  const sentSet  = new Set(JSON.parse(localStorage.getItem(SENT_KEY) || '[]'));
+
+  if (!checklist.length) {
+    showToast(`Cat ${cat}: sem atletas com pendências.`, 'info');
+    return;
+  }
+
+  function buildRows(list) {
+    return list.map(a => {
+      const isSent = sentSet.has(a.athlete_id);
+      const issues = a.issues.map(k => {
+        const { icon, text } = ISSUE_LABELS[k] || { icon: '•', text: k };
+        return `<span class="comms-issue-tag">${icon} ${text}</span>`;
+      }).join('');
+      const waLink = a.telefone
+        ? (() => {
+            const phone = a.telefone.replace(/\D/g, '');
+            const fullPhone = phone.startsWith('55') ? phone : '55' + phone;
+            const msgs = [];
+            if (a.issues.includes('sem_slots'))
+              msgs.push(`Olá ${a.nome.split(' ')[0]}! Por favor marque seus horários disponíveis no SuperRank para a Rodada atual. Acesse: ${window._appUrl || ''}#mesa/home`);
+            if (a.issues.includes('resultado_pendente'))
+              msgs.push(`Olá ${a.nome.split(' ')[0]}! Seu resultado aguarda confirmação no SuperRank. Acesse: ${window._appUrl || ''}#mesa/resultado`);
+            const msg = encodeURIComponent(msgs.join('\n'));
+            return `https://wa.me/${fullPhone}?text=${msg}`;
+          })()
+        : null;
+      return `<div class="comms-row${isSent ? ' comms-sent' : ''}" data-aid="${a.athlete_id}">
+        <div class="comms-row-left">
+          <span class="comms-nome">${escapeHtml(a.nome)}</span>
+          <span class="comms-cat-tag">${catLabel(a.cat)} G${a.group_idx + 1}</span>
+          <div class="comms-issues">${issues}</div>
+        </div>
+        <div class="comms-row-right">
+          ${isSent ? `<span class="comms-ok-tag">✓ Enviado</span>` : ''}
+          ${waLink
+            ? `<a href="${waLink}" target="_blank" class="btn btn-ghost btn-sm comms-wa-btn"
+                data-aid="${a.athlete_id}">
+                📱 WhatsApp
+              </a>`
+            : `<span style="font-size:11px;color:var(--color-text-muted);">Sem telefone</span>`}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const overlay = document.createElement('div');
+  overlay.className = 'impact-modal-overlay';
+  overlay.innerHTML = `
+    <div class="impact-modal" style="max-width:580px;">
+      <div class="impact-modal-header">
+        <span class="impact-modal-title">📢 Comunicação — Rodada · Cat ${escapeHtml(cat)}</span>
+        <button class="impact-modal-close" id="closeCommsModal">✕</button>
+      </div>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:14px;">
+        ${checklist.length} atleta(s) com pendências. Clique em WhatsApp para abrir a conversa com mensagem pré-preenchida.
+      </p>
+      <div id="comms-list">${buildRows(checklist)}</div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--color-border);display:flex;justify-content:space-between;align-items:center;">
+        <button id="btn-clear-sent" class="btn btn-ghost btn-sm" style="font-size:12px;color:var(--color-text-muted);">
+          Limpar marcações de enviado
+        </button>
+        <span style="font-size:11px;color:var(--color-text-muted);">Marcações salvas localmente</span>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  overlay.querySelectorAll('.comms-wa-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const aid = btn.dataset.aid;
+      sentSet.add(aid);
+      localStorage.setItem(SENT_KEY, JSON.stringify([...sentSet]));
+      const row = overlay.querySelector(`.comms-row[data-aid="${aid}"]`);
+      if (row) {
+        row.classList.add('comms-sent');
+        const right = row.querySelector('.comms-row-right');
+        if (right && !right.querySelector('.comms-ok-tag')) {
+          right.insertAdjacentHTML('afterbegin', `<span class="comms-ok-tag">✓ Enviado</span>`);
+        }
+      }
+    });
+  });
+
+  overlay.querySelector('#btn-clear-sent').addEventListener('click', () => {
+    sentSet.clear();
+    localStorage.removeItem(SENT_KEY);
+    overlay.querySelector('#comms-list').innerHTML = buildRows(checklist);
+    overlay.querySelectorAll('.comms-wa-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        sentSet.add(btn.dataset.aid);
+        localStorage.setItem(SENT_KEY, JSON.stringify([...sentSet]));
+        btn.closest('.comms-row')?.classList.add('comms-sent');
+      });
+    });
+  });
+
+  overlay.querySelector('#closeCommsModal').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
@@ -6681,6 +6840,76 @@ async function renderAdminAuditoria(content) {
 
   content.querySelector('#btn-refresh-audit').addEventListener('click', loadAndPaint);
   await loadAndPaint();
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 16: Configurações do Sistema
+// ---------------------------------------------------------------------------
+
+async function renderAdminConfig(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando configurações…</p>`;
+  let settings = {};
+  try { settings = await api('/api/admin/settings'); } catch (err) {
+    content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(err.message)}</div>`;
+    return;
+  }
+
+  function field(id, label, value, hint, type = 'text', inputmode = '') {
+    return `
+      <div class="form-group">
+        <label class="field-label" for="${id}">${label}</label>
+        <input id="${id}" class="field-input" type="${type}" ${inputmode ? `inputmode="${inputmode}"` : ''}
+          value="${escapeHtml(value || '')}" />
+        ${hint ? `<p style="font-size:11px;color:var(--color-text-muted);margin-top:3px;">${hint}</p>` : ''}
+      </div>`;
+  }
+
+  content.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">Configurações do Sistema</h1>
+        <p class="section-subtitle">Dados do clube e preferências do administrador</p>
+      </div>
+    </div>
+
+    <div class="card" style="max-width:600px;">
+      <p class="config-section-label">🏟 Clube</p>
+      ${field('cfg-club-name',  'Nome do Clube / App', settings.club_name,  'Aparece no cabeçalho público e nas mensagens automáticas')}
+      ${field('cfg-location',   'Local das Quadras',   settings.court_location, 'Ex.: Quadras do Play, Feira de Santana — BA')}
+      ${field('cfg-app-url',    'URL do Sistema',      settings.app_url,    'Ex.: https://superrank.up.railway.app — usado em links nas mensagens')}
+
+      <hr style="border:none;border-top:1px solid var(--color-border);margin:20px 0;">
+
+      <p class="config-section-label">📱 Comunicação</p>
+      ${field('cfg-admin-wa',   'WhatsApp do Admin (DDI + DDD + número)', settings.admin_whatsapp, 'Ex.: 5575999998888 — sem espaços ou traços', 'tel', 'numeric')}
+
+      <div style="display:flex;gap:10px;margin-top:20px;align-items:center;">
+        <button id="btn-save-config" class="btn btn-primary">Salvar configurações</button>
+        <span id="cfg-feedback" style="font-size:13px;"></span>
+      </div>
+    </div>`;
+
+  content.querySelector('#btn-save-config').addEventListener('click', async () => {
+    const btn = content.querySelector('#btn-save-config');
+    const fb  = content.querySelector('#cfg-feedback');
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    const body = {
+      club_name:      content.querySelector('#cfg-club-name').value.trim(),
+      court_location: content.querySelector('#cfg-location').value.trim(),
+      app_url:        content.querySelector('#cfg-app-url').value.trim(),
+      admin_whatsapp: content.querySelector('#cfg-admin-wa').value.replace(/\D/g, ''),
+    };
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body });
+      fb.textContent = '✓ Configurações salvas!';
+      fb.style.color = 'var(--color-cat-c)';
+      showToast('Configurações atualizadas.', 'success');
+    } catch (err) {
+      fb.textContent = 'Erro: ' + err.message;
+      fb.style.color = '#D94040';
+    }
+    btn.disabled = false; btn.textContent = 'Salvar configurações';
+  });
 }
 
 // ---------------------------------------------------------------------------

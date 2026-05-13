@@ -2904,3 +2904,45 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 .impact-up   { color: #22C55E; font-weight: 700; }
 .impact-down { color: #EF4444; font-weight: 700; }
 .impact-same { color: var(--color-text-muted); }
+
+/* Sprint 16 — Configurações */
+.config-section-label {
+  font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--color-text-muted);
+  margin-bottom: 14px; margin-top: 4px;
+}
+
+/* Sprint 16 — Comunicação em Massa */
+.comms-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); gap: 12px;
+}
+.comms-row:last-child { border-bottom: none; }
+.comms-row.comms-sent { opacity: 0.55; }
+.comms-row-left  { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.comms-row-right { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.comms-nome  { font-weight: 600; font-size: 14px; }
+.comms-cat-tag { font-size: 11px; color: var(--color-text-muted); }
+.comms-issues { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.comms-issue-tag {
+  background: rgba(255,179,0,0.12); color: var(--color-gold);
+  border: 1px solid rgba(255,179,0,0.25);
+  border-radius: 4px; font-size: 11px; padding: 1px 6px;
+}
+.comms-ok-tag {
+  font-size: 11px; color: #22C55E; font-weight: 700; white-space: nowrap;
+}
+
+/* Sprint 16 — Cronograma de Rodadas (Mesa Home) */
+.sched-list { display: flex; flex-direction: column; gap: 6px; }
+.sched-row {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.sched-row:last-child { border-bottom: none; }
+.sched-row.sched-closed { opacity: 0.5; }
+.sched-row.sched-active .sched-num { color: var(--color-gold); font-weight: 700; }
+.sched-num    { width: 26px; font-weight: 600; font-size: 12px; color: var(--color-text-muted); flex-shrink: 0; }
+.sched-period { flex: 1; color: var(--color-text); font-size: 12px; }
+.sched-status { font-size: 11px; white-space: nowrap; }
