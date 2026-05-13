@@ -980,11 +980,15 @@ async function renderAdmin(sub) {
 async function renderAdminDashboard(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando dashboard…</p>`;
 
-  let stats = {}, rankingData = {};
+  let stats = {}, rankingData = {}, allAthletes = [];
   try { stats = await api('/api/admin/stats'); } catch (_) {}
   if (stats.active_season_id) {
     try { rankingData = await api(`/api/seasons/${stats.active_season_id}/ranking`); } catch (_) {}
   }
+  if (stats.pending_registration > 0) {
+    try { allAthletes = await api('/api/athletes'); } catch (_) {}
+  }
+  const pendingAthletes = allAthletes.filter(a => !a.admin_confirmed);
 
   // --- Progress bar da rodada ativa ---
   function buildRoundProgress(rp) {
@@ -1095,10 +1099,15 @@ async function renderAdminDashboard(content) {
 
     ${buildOverdueAlerts(stats.overdue_rounds)}
 
-    ${stats.pending_registration > 0 ? `
-      <div class="alert alert-warning">
-        <strong>${stats.pending_registration} atleta(s) aguardando confirmação.</strong>
-        <a href="#admin/atletas" style="margin-left:8px;">Gerenciar →</a>
+    ${pendingAthletes.length > 0 ? `
+      <div class="alert alert-warning" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+        <span>
+          <strong>⚠ ${pendingAthletes.length} atleta(s) aguardando confirmação:</strong>
+          ${pendingAthletes.slice(0, 3).map(a => escapeHtml(a.nome)).join(', ')}${pendingAthletes.length > 3 ? ` e mais ${pendingAthletes.length - 3}…` : '.'}
+        </span>
+        <a href="#admin/atletas" class="btn btn-ghost btn-sm" style="margin-left:auto;white-space:nowrap;">
+          Confirmar agora →
+        </a>
       </div>` : ''}
 
     ${!stats.active_season_name ? `
@@ -1150,13 +1159,18 @@ function paintAtletasTable(content) {
       </table>
     </div>`;
 
+  const pendingCount = athletes.filter(a => !a.admin_confirmed).length;
+
   content.innerHTML = `
     <div class="section-header">
       <div>
         <h1 class="section-title">Gestão de Atletas</h1>
-        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s)</p>
+        <p class="section-subtitle">${athletes.length} atleta(s) cadastrado(s)${pendingCount ? ` · <span style="color:#BA7517;">${pendingCount} pendente(s)</span>` : ''}</p>
       </div>
-      <button id="btn-novo-atleta" class="btn btn-primary">+ Novo Atleta</button>
+      <div style="display:flex;gap:8px;">
+        <a href="/api/athletes/export.csv" class="btn btn-ghost btn-sm" title="Baixar lista em CSV">⬇ CSV</a>
+        <button id="btn-novo-atleta" class="btn btn-primary">+ Novo Atleta</button>
+      </div>
     </div>
 
     <div class="filter-bar">
@@ -1175,6 +1189,10 @@ function paintAtletasTable(content) {
         <option value="D">Cat D</option>
         <option value="sem">Sem categoria</option>
       </select>
+      <button id="filter-pendentes" class="btn btn-ghost btn-sm${pendingCount ? ' filter-pending-active' : ''}"
+        style="${pendingCount ? 'color:#BA7517;border-color:#BA7517;' : 'color:var(--color-text-muted);'}">
+        ⚠ Pendentes ${pendingCount ? `(${pendingCount})` : ''}
+      </button>
     </div>
 
     ${tableBlock}`;
@@ -1183,16 +1201,18 @@ function paintAtletasTable(content) {
   content.querySelector('#btn-novo-atleta').addEventListener('click', () => openAtletaModal());
 
   // Busca + filtros
+  let showPendentesOnly = false;
+
   function applyFilters() {
     const q = content.querySelector('#search-atleta').value.toLowerCase();
     const typeF = content.querySelector('#filter-type').value;
     const catF = content.querySelector('#filter-cat').value;
     const filtered = state.athletes.filter(a => {
-      const matchName = a.nome.toLowerCase().includes(q);
+      const matchName = (a.nome.toLowerCase().includes(q) || (a.apelido || '').toLowerCase().includes(q));
       const matchType = !typeF || a.type === typeF;
-      const matchCat = !catF
-        || (catF === 'sem' ? !a.current_category : a.current_category === catF);
-      return matchName && matchType && matchCat;
+      const matchCat  = !catF || (catF === 'sem' ? !a.current_category : a.current_category === catF);
+      const matchPend = !showPendentesOnly || !a.admin_confirmed;
+      return matchName && matchType && matchCat && matchPend;
     });
     const listEl  = content.querySelector('#atletas-list');
     const tbodyEl = content.querySelector('#atletas-tbody');
@@ -1204,8 +1224,67 @@ function paintAtletasTable(content) {
   content.querySelector('#search-atleta').addEventListener('input', applyFilters);
   content.querySelector('#filter-type').addEventListener('change', applyFilters);
   content.querySelector('#filter-cat').addEventListener('change', applyFilters);
+  content.querySelector('#filter-pendentes')?.addEventListener('click', () => {
+    showPendentesOnly = !showPendentesOnly;
+    const btn = content.querySelector('#filter-pendentes');
+    btn.style.color = showPendentesOnly ? '#F59E0B' : '';
+    btn.style.borderColor = showPendentesOnly ? '#F59E0B' : '';
+    btn.style.background = showPendentesOnly ? 'rgba(245,158,11,0.1)' : '';
+    applyFilters();
+  });
 
   function attachRowActions() {
+    // Confirmação rápida de atleta pendente
+    content.querySelectorAll('.btn-confirmar-atleta').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const atleta = state.athletes.find(a => a.id === id);
+        openModal(
+          `Confirmar Atleta — ${escapeHtml(atleta.nome)}`,
+          `<p style="font-size:13px;color:var(--color-text-muted);margin-bottom:14px;">
+             Defina a categoria e o tipo para liberar o acesso do atleta.
+           </p>
+           <div class="form-group">
+             <label class="field-label">Categoria</label>
+             <select id="confirm-cat" class="field-input">
+               <option value="">Selecione…</option>
+               <option value="A">Cat A</option>
+               <option value="B">Cat B</option>
+               <option value="C">Cat C</option>
+               <option value="D">Cat D</option>
+             </select>
+           </div>
+           <div class="form-group">
+             <label class="field-label">Tipo</label>
+             <select id="confirm-type" class="field-input">
+               <option value="titular">Titular</option>
+               <option value="reserva">Reserva</option>
+               <option value="visitante">Visitante</option>
+             </select>
+           </div>`,
+          `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+           <button class="btn btn-primary" id="btn-do-confirm" style="margin-left:8px;">✓ Confirmar Atleta</button>`
+        );
+        document.getElementById('btn-do-confirm').addEventListener('click', async () => {
+          const cat  = document.getElementById('confirm-cat').value;
+          const type = document.getElementById('confirm-type').value;
+          if (!cat) { showToast('Selecione uma categoria', 'error'); return; }
+          try {
+            const updated = await api(`/api/athletes/${id}`, {
+              method: 'PUT',
+              body: { current_category: cat, type },
+            });
+            state.athletes = state.athletes.map(a => a.id === id ? updated : a);
+            closeModal();
+            showToast(`${escapeHtml(atleta.nome)} confirmado na Cat ${cat}.`, 'success');
+            applyFilters();
+          } catch (err) {
+            showToast('Erro: ' + err.message, 'error');
+          }
+        });
+      });
+    });
+
     content.querySelectorAll('.btn-editar-atleta').forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.dataset.id;
@@ -1288,6 +1367,7 @@ function renderAtletasRows(athletes) {
             ${typeBadge(a.type)} ${catLabel(a.current_category)} · ${confirmado}
           </div>
           <div class="atleta-card-acoes">
+            ${!a.admin_confirmed ? `<button class="btn btn-ghost btn-sm btn-confirmar-atleta" data-id="${a.id}" style="color:#22C55E;font-weight:700;">✓ Confirmar</button>` : ''}
             ${waBtn(a.telefone)}
             <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}">Editar</button>
             <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" title="PIN temporário">PIN</button>
@@ -1318,6 +1398,7 @@ function renderAtletasRows(athletes) {
       <td>${a.admin_confirmed ? '<span style="color:#2A7A3A;">✓</span>' : '<span style="color:#BA7517;">Pendente</span>'}</td>
       <td>${statusBadge(a.status)}</td>
       <td style="text-align:right;white-space:nowrap;">
+        ${!a.admin_confirmed ? `<button class="btn btn-ghost btn-sm btn-confirmar-atleta" data-id="${a.id}" style="color:#22C55E;font-weight:700;margin-right:4px;">✓ Confirmar</button>` : ''}
         ${waBtn(a.telefone)}
         <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}" style="margin-left:4px;">Editar</button>
         <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" style="margin-left:4px;" title="PIN temporário">PIN</button>
@@ -2264,6 +2345,30 @@ async function renderAdminRodada(content) {
       });
     });
 
+    // Close round buttons
+    content.querySelectorAll('.btn-close-round').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const roundId = btn.dataset.roundId;
+        confirmModal(
+          'Encerrar Rodada',
+          'Encerrar esta rodada manualmente? Grupos sem resultado confirmado ficarão sem pontuação nesta rodada.',
+          async () => {
+            btn.disabled = true; btn.textContent = 'Encerrando…';
+            try {
+              const res = await api(`/api/rounds/${roundId}/close`, { method: 'POST', body: {} });
+              if (res.warning) showToast(res.warning, 'info');
+              else showToast('Rodada encerrada com sucesso.', 'success');
+              await loadAndPaint(season);
+            } catch (err) {
+              showToast(`Erro: ${err.message}`, 'error');
+              btn.disabled = false; btn.innerHTML = '⊗ Encerrar Rodada';
+            }
+          },
+          'Encerrar'
+        );
+      });
+    });
+
     // Reopen closed round buttons
     content.querySelectorAll('.btn-reopen-round').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -2408,6 +2513,14 @@ function renderRoundCard(round, season) {
           <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
             <button class="btn btn-ghost btn-sm btn-authorize-draw" data-round-id="${round.id}">
               ✓ Autorizar Sorteio da Próxima Rodada
+            </button>
+          </div>` : ''}
+        ${round.status !== 'closed' && round.status !== 'cancelled' && round.status !== 'pending' ? `
+          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
+            <button class="btn btn-ghost btn-sm btn-close-round" data-round-id="${round.id}"
+              style="color:#D94040;"
+              title="Encerrar esta rodada manualmente">
+              ⊗ Encerrar Rodada
             </button>
           </div>` : ''}
         ${round.status === 'closed' ? `

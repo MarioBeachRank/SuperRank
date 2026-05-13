@@ -324,8 +324,16 @@ def athletes_update(athlete_id):
         cat = body["current_category"]
         if cat is not None and cat not in CATEGORIES:
             return jsonify({"error": "Categoria inválida"}), 400
+        was_unconfirmed = not atleta.get("admin_confirmed")
         atleta["current_category"] = cat
         atleta["admin_confirmed"] = True
+        if was_unconfirmed:
+            log_audit("athlete_confirmed", {
+                "athlete_id": athlete_id,
+                "nome": atleta.get("nome"),
+                "category": cat,
+                "type": atleta.get("type"),
+            })
 
     if "desired_category" in body:
         desired = body["desired_category"]
@@ -354,6 +362,35 @@ def athletes_delete(athlete_id):
         return jsonify({"error": "Atleta não encontrado"}), 404
     write_json("athletes.json", db)
     return jsonify({"ok": True})
+
+
+@app.route("/api/athletes/export.csv")
+@require_admin
+def athletes_export_csv():
+    """Exporta lista de atletas em CSV."""
+    import csv, io
+    db = read_json("athletes.json")
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Nome", "Apelido", "Tipo", "Categoria", "Status",
+                     "Confirmado", "Telefone", "Cadastro"])
+    for a in db["data"]:
+        writer.writerow([
+            a.get("nome", ""),
+            a.get("apelido", ""),
+            a.get("type", ""),
+            a.get("current_category", ""),
+            a.get("status", ""),
+            "sim" if a.get("admin_confirmed") else "não",
+            a.get("telefone", ""),
+            (a.get("created_at") or "")[:10],
+        ])
+    from flask import Response
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=atletas_{now_iso()[:10]}.csv"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +763,25 @@ def rounds_create(season_id):
 
     rounds_db["data"].append(round_obj)
     write_json("rounds.json", rounds_db)
+
+    # Notifica todos os atletas participantes da rodada
+    all_athlete_ids: set[str] = set()
+    for cat_groups in groups_flat.values():
+        for group in cat_groups:
+            all_athlete_ids.update(group)
+    period = ""
+    if round_start_date and round_end_date:
+        period = f" ({round_start_date} a {round_end_date})"
+    for aid in all_athlete_ids:
+        try:
+            _create_notification(
+                aid, "round_drawn",
+                f"Rodada {round_number} sorteada!",
+                f"Você foi sorteado para a Rodada {round_number}{period}. Marque seus horários disponíveis.",
+                "#mesa/home",
+            )
+        except Exception:
+            pass
 
     athletes_by_id = {a["id"]: a for a in athletes_db["data"]}
     return jsonify(_enrich_round(round_obj, athletes_by_id)), 201
@@ -2279,6 +2335,43 @@ def round_reopen(round_id):
     })
     athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
     return jsonify(_enrich_round(rnd, athletes_by_id))
+
+
+@app.route("/api/rounds/<round_id>/close", methods=["POST"])
+@require_admin
+def round_close(round_id):
+    """Encerra manualmente uma rodada aberta."""
+    rounds_db   = read_json("rounds.json")
+    results_db  = read_json("results.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd.get("status") == "closed":
+        return jsonify({"error": "Rodada já encerrada"}), 400
+    if rnd.get("status") == "cancelled":
+        return jsonify({"error": "Rodada cancelada não pode ser encerrada"}), 400
+
+    # Conta grupos sem resultado confirmado (aviso, não bloqueio)
+    groups_map = rnd.get("groups", {})
+    total_groups = sum(len(g) for g in groups_map.values())
+    round_results = [r for r in results_db["data"] if r.get("round_id") == round_id]
+    confirmed = sum(1 for r in round_results if r.get("status") == "confirmed")
+    missing = total_groups - confirmed
+
+    rnd["status"] = "closed"
+    rnd["closed_at"] = now_iso()
+    write_json("rounds.json", rounds_db)
+    log_audit("round_closed", {
+        "round_id": round_id,
+        "round_number": rnd.get("round_number"),
+        "season_id": rnd.get("season_id"),
+        "groups_missing_result": missing,
+    })
+    athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
+    return jsonify({
+        "round": _enrich_round(rnd, athletes_by_id),
+        "warning": f"{missing} grupo(s) sem resultado confirmado." if missing else None,
+    })
 
 
 @app.route("/api/seasons/<season_id>/ranking/export.csv")
