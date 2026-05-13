@@ -2597,3 +2597,165 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 .match-set-score.win  { background: rgba(34,197,94,0.18); color: #16A34A; }
 .match-set-score.loss { background: rgba(239,68,68,0.12); color: #EF4444; }
 .match-set-score.wo   { background: rgba(255,255,255,0.08); color: var(--color-text-muted); }
+
+/* =====================================================================
+   Sprint 12 — Dashboard Admin Inteligente
+   ===================================================================== */
+
+/* --- Rodada vencida tag --- */
+.dash-overdue-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #EF4444;
+  color: #fff;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.alert.dash-overdue-alert { margin-bottom: 10px; }
+
+/* --- Progress bar da rodada ativa --- */
+.dash-round-progress {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+}
+.dash-round-progress.is-overdue {
+  border-color: rgba(239,68,68,0.5);
+  background: rgba(239,68,68,0.04);
+}
+.dash-round-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dash-round-label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.dash-round-period {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-left: 10px;
+}
+.dash-progress-bar-track {
+  height: 8px;
+  border-radius: 99px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.dash-progress-bar-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--color-accent);
+  transition: width .4s ease;
+}
+.dash-progress-bar-fill.complete { background: #22C55E; }
+.dash-prog-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.dash-prog-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.dash-prog-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+}
+.chip-confirmed  { background: rgba(34,197,94,0.15);  color: #16A34A; }
+.chip-pending    { background: rgba(234,179,8,0.15);  color: #CA8A04; }
+.chip-contested  { background: rgba(239,68,68,0.15);  color: #DC2626; }
+.chip-missing    { background: rgba(148,163,184,0.15); color: var(--color-text-muted); }
+
+/* --- Card de contestações --- */
+.dash-contested-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.35);
+  border-radius: var(--radius-lg);
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  text-decoration: none;
+  color: var(--color-text);
+  transition: background .15s;
+  cursor: pointer;
+}
+.dash-contested-card:hover { background: rgba(239,68,68,0.14); }
+.dash-contested-icon  { font-size: 24px; flex-shrink: 0; }
+.dash-contested-count { font-size: 22px; font-weight: 800; color: #EF4444; line-height: 1; }
+.dash-contested-label { font-size: 12px; color: var(--color-text-muted); margin-top: 2px; }
+.dash-contested-arrow { margin-left: auto; font-size: 18px; color: var(--color-text-muted); }
+
+/* --- Mini-ranking das 4 categorias --- */
+.dash-ranking-section { margin-top: 4px; }
+.dash-ranking-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.dash-ranking-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--color-text-muted);
+}
+.dash-ranking-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.dash-ranking-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+}
+.dash-ranking-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+}
+.dash-ranking-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.dash-ranking-row:last-of-type { border-bottom: none; }
+.dash-ranking-nome {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dash-ranking-pts {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-accent);
+  white-space: nowrap;
+}

@@ -65,6 +65,12 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return `${d}/${m}/${y}`;
+}
+
 // ---------------------------------------------------------------------------
 // Telefone / WhatsApp helpers
 // ---------------------------------------------------------------------------
@@ -960,52 +966,129 @@ async function renderAdminDashboard(content) {
 
   let stats = {}, rankingData = {};
   try { stats = await api('/api/admin/stats'); } catch (_) {}
-
-  // Ranking preview da temporada ativa
-  let rankingPreview = '';
   if (stats.active_season_id) {
-    try {
-      rankingData = await api(`/api/seasons/${stats.active_season_id}/ranking`);
-      const previewCat = ['A','B','C','D'].find(c => rankingData[c]?.length > 0);
-      if (previewCat) {
-        const top3 = rankingData[previewCat].slice(0, 3);
-        const medals = ['🥇','🥈','🥉'];
-        rankingPreview = `
-          <div class="card" style="margin-top:20px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-              <strong style="font-size:14px;">Ranking ao Vivo ${catLabel(previewCat)}</strong>
-              <a href="#publico/ranking" style="font-size:12px;color:var(--color-accent);">Ver completo →</a>
-            </div>
-            ${top3.map((r, i) => `
-              <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:var(--border);">
-                <span style="font-size:20px;">${medals[i]}</span>
-                <span style="font-weight:600;flex:1;">${escapeHtml(r.nome)}</span>
-                <span class="ranking-pts">${r.points}pts</span>
-              </div>`).join('')}
-          </div>`;
-      }
-    } catch (_) {}
+    try { rankingData = await api(`/api/seasons/${stats.active_season_id}/ranking`); } catch (_) {}
   }
 
+  // --- Progress bar da rodada ativa ---
+  function buildRoundProgress(rp) {
+    if (!rp) return '';
+    const { round_number, start_date, end_date, total_groups,
+            confirmed, pending_confirmation, contested, not_launched, is_overdue } = rp;
+    const pct = total_groups ? Math.round((confirmed / total_groups) * 100) : 0;
+    const period = (start_date && end_date) ? `${fmtDate(start_date)} → ${fmtDate(end_date)}` : '';
+    const overdueTag = is_overdue
+      ? `<span class="dash-overdue-tag">VENCIDA</span>`
+      : '';
+    const chips = [
+      confirmed            ? `<span class="dash-prog-chip chip-confirmed">${confirmed} confirmado${confirmed !== 1 ? 's' : ''}</span>` : '',
+      pending_confirmation ? `<span class="dash-prog-chip chip-pending">${pending_confirmation} aguard. confirmação</span>` : '',
+      contested            ? `<span class="dash-prog-chip chip-contested">${contested} contestado${contested !== 1 ? 's' : ''}</span>` : '',
+      not_launched         ? `<span class="dash-prog-chip chip-missing">${not_launched} não lançado${not_launched !== 1 ? 's' : ''}</span>` : '',
+    ].filter(Boolean).join('');
+
+    return `
+      <div class="dash-round-progress ${is_overdue ? 'is-overdue' : ''}">
+        <div class="dash-round-progress-header">
+          <div>
+            <span class="dash-round-label">Rodada ${round_number}</span>
+            ${overdueTag}
+            ${period ? `<span class="dash-round-period">${period}</span>` : ''}
+          </div>
+          <a href="#admin/resultados" class="btn btn-ghost btn-sm">Ver resultados →</a>
+        </div>
+        <div class="dash-progress-bar-track">
+          <div class="dash-progress-bar-fill ${pct === 100 ? 'complete' : ''}" style="width:${pct}%"></div>
+        </div>
+        <div class="dash-prog-meta">
+          <span>${pct}% concluído · ${confirmed}/${total_groups} grupos</span>
+          <div class="dash-prog-chips">${chips}</div>
+        </div>
+      </div>`;
+  }
+
+  // --- Alertas de rodadas vencidas ---
+  function buildOverdueAlerts(overdue) {
+    if (!overdue?.length) return '';
+    return overdue.map(r => `
+      <div class="alert alert-error dash-overdue-alert">
+        <strong>Rodada ${r.round_number} vencida</strong> —
+        prazo encerrado em ${fmtDate(r.end_date)} com
+        ${r.missing} grupo${r.missing !== 1 ? 's' : ''} sem resultado confirmado.
+        <a href="#admin/resultados" style="margin-left:8px;">Resolver →</a>
+      </div>`).join('');
+  }
+
+  // --- Mini-ranking das 4 categorias ---
+  function buildRankingGrid(rankingData) {
+    const cats = ['A','B','C','D'].filter(c => rankingData[c]?.length > 0);
+    if (!cats.length) return '';
+    const medals = ['', 'gold', 'silver', 'bronze'];
+    return `
+      <div class="dash-ranking-section">
+        <div class="dash-ranking-header">
+          <span class="dash-ranking-title">Ranking ao Vivo</span>
+          <a href="#publico/ranking" class="btn btn-ghost btn-sm">Ver completo →</a>
+        </div>
+        <div class="dash-ranking-grid">
+          ${cats.map(cat => `
+            <div class="dash-ranking-card">
+              <div class="dash-ranking-card-title">${catLabel(cat)}</div>
+              ${rankingData[cat].slice(0, 3).map((r, i) => `
+                <div class="dash-ranking-row">
+                  <span class="rank-position ${medals[i + 1]}" style="font-size:13px;width:22px;height:22px;">${r.rank}</span>
+                  <span class="dash-ranking-nome">${escapeHtml(r.nome)}</span>
+                  <span class="dash-ranking-pts">${r.points}pts</span>
+                </div>`).join('')}
+              ${rankingData[cat].length > 3 ? `
+                <div style="font-size:11px;color:var(--color-text-muted);text-align:center;padding-top:6px;">
+                  +${rankingData[cat].length - 3} atletas
+                </div>` : ''}
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  // --- Cards de stat ---
   const statCards = [
-    { label: 'Atletas Ativos',    value: stats.active_athletes    ?? '—', href: '#admin/atletas',       cls: '' },
-    { label: 'Pendentes',         value: stats.pending_registration ?? 0,  href: '#admin/atletas',       cls: stats.pending_registration ? 'warn' : '' },
-    { label: 'Temporada Ativa',   value: stats.active_season_name ?? '—', href: '#admin/categorias',    cls: stats.active_season_name ? 'accent' : '' },
-    { label: 'Temporadas',        value: stats.total_seasons      ?? '—', href: '#admin/categorias',    cls: '' },
-    { label: 'Rodadas',           value: stats.total_rounds       ?? '—', href: '#admin/rodada',        cls: '' },
-    { label: 'Resultados Conf.',  value: stats.confirmed_results  ?? '—', href: '#admin/resultados',    cls: '' },
+    { label: 'Atletas Ativos',   value: stats.active_athletes      ?? '—', href: '#admin/atletas',    cls: '' },
+    { label: 'Pendentes',        value: stats.pending_registration  ?? 0,   href: '#admin/atletas',    cls: stats.pending_registration ? 'warn' : '' },
+    { label: 'Temporada Ativa',  value: stats.active_season_name   ?? '—', href: '#admin/temporadas', cls: stats.active_season_name ? 'accent' : '' },
+    { label: 'Resultados Conf.', value: stats.confirmed_results     ?? '—', href: '#admin/resultados', cls: '' },
   ];
+
+  // --- Card de contestações ---
+  const contestedCard = stats.contested_count > 0 ? `
+    <a href="#admin/contestacoes" class="dash-contested-card">
+      <span class="dash-contested-icon">⚑</span>
+      <div>
+        <div class="dash-contested-count">${stats.contested_count}</div>
+        <div class="dash-contested-label">contestação${stats.contested_count !== 1 ? 'ões' : ''} pendente${stats.contested_count !== 1 ? 's' : ''}</div>
+      </div>
+      <span class="dash-contested-arrow">→</span>
+    </a>` : '';
 
   content.innerHTML = `
     <div class="section-header">
       <div>
-        <h1 class="section-title">Dashboard Admin</h1>
-        <p class="section-subtitle">SuperRank · Rei do Play</p>
+        <h1 class="section-title">Dashboard</h1>
+        <p class="section-subtitle">${escapeHtml(stats.active_season_name || 'SuperRank · Rei do Play')}</p>
       </div>
-      <a href="/api/admin/export" class="btn btn-ghost btn-sm" title="Exportar todos os dados como JSON" download>
-        Exportar dados
-      </a>
+      <a href="/api/admin/export" class="btn btn-ghost btn-sm" download>Exportar dados</a>
     </div>
+
+    ${buildOverdueAlerts(stats.overdue_rounds)}
+
+    ${stats.pending_registration > 0 ? `
+      <div class="alert alert-warning">
+        <strong>${stats.pending_registration} atleta(s) aguardando confirmação.</strong>
+        <a href="#admin/atletas" style="margin-left:8px;">Gerenciar →</a>
+      </div>` : ''}
+
+    ${!stats.active_season_name ? `
+      <div class="alert alert-info">
+        Nenhuma temporada ativa. <a href="#admin/temporada/nova">Criar temporada →</a>
+      </div>` : ''}
 
     <div class="stat-grid">
       ${statCards.map(c => `
@@ -1015,16 +1098,9 @@ async function renderAdminDashboard(content) {
         </a>`).join('')}
     </div>
 
-    ${stats.pending_registration > 0 ? `
-      <div class="alert alert-warning">
-        <strong>${stats.pending_registration} atleta(s) aguardando confirmação de categoria.</strong>
-        <a href="#admin/atletas" style="margin-left:8px;">Gerenciar atletas →</a>
-      </div>` : ''}
-    ${!stats.active_season_name ? `
-      <div class="alert alert-info">
-        Nenhuma temporada ativa. <a href="#admin/temporada/nova">Criar temporada →</a>
-      </div>` : ''}
-    ${rankingPreview}`;
+    ${contestedCard}
+    ${buildRoundProgress(stats.round_progress)}
+    ${buildRankingGrid(rankingData)}`;
 }
 
 // ---------------------------------------------------------------------------
