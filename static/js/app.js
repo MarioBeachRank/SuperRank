@@ -1126,7 +1126,10 @@ async function renderAdminDashboard(content) {
         <h1 class="section-title">Dashboard</h1>
         <p class="section-subtitle">${escapeHtml(stats.active_season_name || 'SuperRank · Rei do Play')}</p>
       </div>
-      <a href="/api/admin/export" class="btn btn-ghost btn-sm" download>Exportar dados</a>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="btn-dash-refresh" class="btn btn-ghost btn-sm" title="Atualizar">↺ Atualizar</button>
+        <a href="/api/admin/export" class="btn btn-ghost btn-sm" download>Exportar dados</a>
+      </div>
     </div>
 
     ${buildOverdueAlerts(stats.overdue_rounds)}
@@ -1158,6 +1161,8 @@ async function renderAdminDashboard(content) {
     ${contestedCard}
     ${buildRoundProgress(stats.round_progress)}
     ${buildRankingGrid(rankingData)}`;
+
+  content.querySelector('#btn-dash-refresh')?.addEventListener('click', () => renderAdminDashboard(content));
 }
 
 // ---------------------------------------------------------------------------
@@ -2448,6 +2453,21 @@ async function renderAdminRodada(content) {
             });
           });
 
+          // Copy draw text to clipboard
+          body.querySelectorAll('.btn-copy-draw').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const rnd = rounds.find(r => r.id === btn.dataset.roundId);
+              if (!rnd) return;
+              const text = buildDrawText(rnd, selectedSeason);
+              navigator.clipboard?.writeText(text).catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = text; document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+              });
+              showToast('Sorteio copiado para a área de transferência!', 'success');
+            });
+          });
+
           // Load result statuses for this round and annotate group cards
           const roundId = header.closest('.round-card').dataset.roundId;
           if (roundId) {
@@ -2541,6 +2561,13 @@ function renderRoundCard(round, season) {
                     </button>
                   </div>` : ''}
               </div>`).join('')}`}
+        ${Object.keys(round.groups_named || {}).some(c => (round.groups_named[c]||[]).length) ? `
+          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
+            <button class="btn btn-ghost btn-sm btn-copy-draw" data-round-id="${round.id}"
+              style="font-size:12px;">
+              📋 Copiar sorteio
+            </button>
+          </div>` : ''}
         ${canAuthorize ? `
           <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
             <button class="btn btn-ghost btn-sm btn-authorize-draw" data-round-id="${round.id}">
@@ -2615,6 +2642,24 @@ function renderGroupsGrid(cat, round) {
           </div>`;
       }).join('')}
     </div>`;
+}
+
+function buildDrawText(round, season) {
+  const lines = [`🎾 Rodada ${round.round_number} — ${season.name}`];
+  if (round.start_date && round.end_date)
+    lines.push(`📅 ${fmtDate(round.start_date)} → ${fmtDate(round.end_date)}`);
+  for (const cat of ['A','B','C','D']) {
+    const groups = (round.groups_named || {})[cat];
+    if (!groups?.length) continue;
+    lines.push('', `📌 Categoria ${cat}`);
+    groups.forEach((group, gi) => {
+      lines.push('', `Grupo ${gi + 1}:`);
+      group.forEach(nome => lines.push(`• ${nome}`));
+      const slot = (round.official_slots || {})[cat]?.[gi];
+      if (slot?.slot) lines.push(`⏰ ${slot.slot}`);
+    });
+  }
+  return lines.join('\n');
 }
 
 function initCatTabs(bodyEl) {
@@ -2701,6 +2746,30 @@ async function renderMesa(sub) {
 // ---------------------------------------------------------------------------
 // Mesa: Home — vista de convidado
 // ---------------------------------------------------------------------------
+
+function deadlineUrgencyColor(dl) {
+  try {
+    const h = (new Date(dl) - new Date()) / 3600000;
+    if (h < 0)  return 'var(--color-text-muted)';
+    if (h < 24) return '#D94040';
+    if (h < 48) return '#BA7517';
+    return '#BA7517';
+  } catch(_) { return '#BA7517'; }
+}
+
+function deadlineUrgencyText(dl) {
+  try {
+    const deadline = new Date(dl);
+    const h = (deadline - new Date()) / 3600000;
+    const timeFmt = deadline.toLocaleString('pt-BR', { hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' });
+    const dateFmt = deadline.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' });
+    if (h < 0)   return `Prazo de slots encerrado`;
+    if (h < 2)   return `⚠ Prazo slots: ${timeFmt} — urgente!`;
+    if (h < 24)  return `⚠ Prazo slots: hoje às ${timeFmt}`;
+    if (h < 48)  return `Prazo slots: amanhã às ${timeFmt}`;
+    return `Prazo slots: ${dateFmt}`;
+  } catch(_) { return dl; }
+}
 
 function renderMesaHomeGuest(content, ctx) {
   const { athlete, group, round, official_slot } = ctx;
@@ -2987,7 +3056,7 @@ async function renderMesaHome(content, ctx) {
           <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:4px;">Rodada Atual</p>
           <p style="font-size:20px;font-weight:700;color:var(--color-primary);">Rodada ${round.round_number} de ${round.rounds_total}</p>
           ${round.target_date ? `<p style="font-size:13px;color:var(--color-text-muted);">Data: ${round.target_date}</p>` : ''}
-          ${round.deadline_slots ? `<p style="font-size:12px;color:#BA7517;">Prazo slots: ${round.deadline_slots}</p>` : ''}
+          ${round.deadline_slots ? `<p style="font-size:12px;color:${deadlineUrgencyColor(round.deadline_slots)};">${deadlineUrgencyText(round.deadline_slots)}</p>` : ''}
         </div>` : `<p class="placeholder-text">Nenhuma rodada criada ainda.</p>`}
 
       <div id="mesa-schedule-block" style="margin-bottom:16px;"></div>
@@ -6219,14 +6288,17 @@ async function renderPublicoResultados(container, _defaultSeason, selectedSeason
 async function renderMesaHistorico(content) {
   content.innerHTML = `<p class="placeholder-text" aria-live="polite">Carregando histórico…</p>`;
 
-  let data;
-  try { data = await api('/api/mesa/history'); }
-  catch (err) {
-    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
+  let history = [], seasons = [];
+  const [histRes, seasonsRes] = await Promise.allSettled([
+    api('/api/mesa/history'),
+    api('/api/seasons'),
+  ]);
+  if (histRes.status !== 'fulfilled') {
+    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(histRes.reason?.message || 'Falha ao carregar')}</p>`;
     return;
   }
-
-  const history = data.history || [];
+  history  = histRes.value.history || [];
+  if (seasonsRes.status === 'fulfilled') seasons = seasonsRes.value;
 
   if (!history.length) {
     content.innerHTML = `
@@ -6238,14 +6310,13 @@ async function renderMesaHistorico(content) {
     return;
   }
 
-  // Summary stats
-  const totalPts   = history.reduce((s, h) => s + (h.my_total ?? 0), 0);
-  const totalSetsW = history.reduce((s, h) => s + (h.my_sets || []).filter(x => x === 3).length, 0);
-  const totalSets  = history.reduce((s, h) => s + (h.my_sets || []).length, 0);
-  const totalGW    = history.reduce((s, h) => s + (h.games_won ?? 0), 0);
-  const totalGL    = history.reduce((s, h) => s + (h.games_lost ?? 0), 0);
-  const firsts     = history.filter(h => h.rank_in_group === 1).length;
-  const winRate    = totalSets > 0 ? Math.round(100 * totalSetsW / totalSets) : 0;
+  // Build season index from history (in order of appearance → most recent last)
+  const seasonById = Object.fromEntries(seasons.map(s => [s.id, s]));
+  const seenSeasonIds = [...new Set(history.map(h => h.season_id).filter(Boolean))];
+  // Most recent first (history is ordered newest-first by the engine)
+  const seasonTabs = seenSeasonIds.map(id => ({ id, name: seasonById[id]?.name || id }));
+
+  let activeSeasonId = 'all'; // 'all' | season_id
 
   const rankBadge = rank => {
     const cls = rank <= 3 ? `rank-${rank}` : '';
@@ -6253,27 +6324,24 @@ async function renderMesaHistorico(content) {
     return `<span class="match-rank-badge ${cls}">${label}</span>`;
   };
 
-  const cards = history.map(h => {
-    // Placar real por set (novo campo set_scores) ou fallback para pips
+  function matchCard(h) {
     let scoresHtml;
-    if (h.set_scores && h.set_scores.length) {
-      scoresHtml = h.set_scores.map(s => {
+    if (h.set_scores?.length) {
+      const scLine = h.set_scores.map(s => {
         const cls = s.wo ? 'wo' : s.won ? 'win' : 'loss';
-        const label = s.wo ? 'WO' : `${s.score_mine}–${s.score_opp}${s.is_super_tiebreak ? ' STB' : ''}`;
-        return `<span class="match-set-score ${cls}">${label}</span>`;
+        const lbl = s.wo ? 'WO' : `${s.score_mine}–${s.score_opp}${s.is_super_tiebreak ? ' STB' : ''}`;
+        return `<span class="match-set-score ${cls}">${lbl}</span>`;
       }).join('<span style="color:var(--color-text-muted);padding:0 2px;">/</span>');
-      const gamesHtml = (h.games_won !== undefined && h.games_lost !== undefined)
+      const gHtml = (h.games_won !== undefined && h.games_lost !== undefined)
         ? `<span style="font-size:11px;color:var(--color-text-muted);margin-left:8px;">${h.games_won}G–${h.games_lost}G</span>`
         : '';
-      scoresHtml = `<div class="match-sets-row">${scoresHtml}${gamesHtml}</div>`;
+      scoresHtml = `<div class="match-sets-row">${scLine}${gHtml}</div>`;
     } else {
       const pips = (h.my_sets || []).map(s =>
         `<span class="match-set-pip ${s === 3 ? 'win' : 'loss'}">${s}</span>`).join('');
       scoresHtml = `<div class="match-sets-row">${pips}</div>`;
     }
-
     const opponents = h.group_members.map(m => escapeHtml(m.nome)).join(', ');
-
     return `
       <div class="match-card">
         <div class="match-card-header">
@@ -6287,40 +6355,62 @@ async function renderMesaHistorico(content) {
         </div>
         ${h.result_status === 'pending' ? `<p style="font-size:11px;color:#BA7517;margin-top:4px;">⏳ Aguardando confirmação</p>` : ''}
       </div>`;
-  }).join('');
+  }
+
+  function statsGrid(items) {
+    const pts   = items.reduce((s, h) => s + (h.my_total ?? 0), 0);
+    const setsW = items.reduce((s, h) => s + (h.my_sets || []).filter(x => x === 3).length, 0);
+    const setsT = items.reduce((s, h) => s + (h.my_sets || []).length, 0);
+    const gw    = items.reduce((s, h) => s + (h.games_won ?? 0), 0);
+    const gl    = items.reduce((s, h) => s + (h.games_lost ?? 0), 0);
+    const f1    = items.filter(h => h.rank_in_group === 1).length;
+    const wr    = setsT > 0 ? Math.round(100 * setsW / setsT) : 0;
+    return `
+      <div class="profile-stats-grid" style="margin-bottom:4px;">
+        <div class="profile-stat-card"><div class="profile-stat-value">${items.length}</div><div class="profile-stat-label">Rodadas</div></div>
+        <div class="profile-stat-card"><div class="profile-stat-value">${pts}</div><div class="profile-stat-label">Pts Totais</div></div>
+        <div class="profile-stat-card"><div class="profile-stat-value">${f1}</div><div class="profile-stat-label">1º Lugares</div></div>
+      </div>
+      <div class="profile-stats-grid" style="margin-bottom:16px;">
+        <div class="profile-stat-card"><div class="profile-stat-value">${setsW}/${setsT}</div><div class="profile-stat-label">Sets G/J</div></div>
+        <div class="profile-stat-card"><div class="profile-stat-value">${wr}%</div><div class="profile-stat-label">Aproveit.</div></div>
+        <div class="profile-stat-card"><div class="profile-stat-value">${gw > 0 ? (gw >= gl ? '+' : '') + (gw - gl) : '—'}</div><div class="profile-stat-label">Saldo Games</div></div>
+      </div>`;
+  }
+
+  function paint() {
+    const items = activeSeasonId === 'all'
+      ? history
+      : history.filter(h => h.season_id === activeSeasonId);
+
+    content.querySelectorAll('.hist-season-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.sid === activeSeasonId));
+
+    content.querySelector('#hist-stats').innerHTML = statsGrid(items);
+    content.querySelector('#hist-cards').innerHTML = items.length
+      ? items.map(matchCard).join('')
+      : `<p style="font-size:13px;color:var(--color-text-muted);padding:8px 0;">Sem partidas nesta temporada.</p>`;
+  }
+
+  const tabsHtml = seasonTabs.length > 1 ? `
+    <div class="hist-season-bar">
+      <button class="hist-season-tab active" data-sid="all">Todas</button>
+      ${seasonTabs.map(s => `<button class="hist-season-tab" data-sid="${s.id}">${escapeHtml(s.name)}</button>`).join('')}
+    </div>` : '';
 
   content.innerHTML = `
     <div style="padding:16px;">
-      <div class="profile-stats-grid" style="margin-bottom:4px;">
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${history.length}</div>
-          <div class="profile-stat-label">Rodadas</div>
-        </div>
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${totalPts}</div>
-          <div class="profile-stat-label">Pts Totais</div>
-        </div>
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${firsts}</div>
-          <div class="profile-stat-label">1º Lugares</div>
-        </div>
-      </div>
-      <div class="profile-stats-grid" style="margin-bottom:20px;">
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${totalSetsW}/${totalSets}</div>
-          <div class="profile-stat-label">Sets G/J</div>
-        </div>
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${winRate}%</div>
-          <div class="profile-stat-label">Aproveit.</div>
-        </div>
-        <div class="profile-stat-card">
-          <div class="profile-stat-value">${totalGW > 0 ? (totalGW >= totalGL ? '+' : '') + (totalGW - totalGL) : '—'}</div>
-          <div class="profile-stat-label">Saldo Games</div>
-        </div>
-      </div>
-      ${cards}
+      ${tabsHtml}
+      <div id="hist-stats">${statsGrid(history)}</div>
+      <div id="hist-cards">${history.map(matchCard).join('')}</div>
     </div>`;
+
+  content.querySelectorAll('.hist-season-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeSeasonId = btn.dataset.sid;
+      paint();
+    });
+  });
 }
 
 
