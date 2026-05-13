@@ -2810,3 +2810,97 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 .wo-preview-row.wo-absent  { background: rgba(239,68,68,0.06); }
 .wo-pts { font-weight: 700; font-size: 13px; }
 .wo-pts.wo-zero { color: #EF4444; }
+
+/* Sprint 14 — Fechamento aprimorado */
+.fech-block-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(239,68,68,0.10);
+  border: 1px solid rgba(239,68,68,0.30);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #EF4444;
+  margin-bottom: 14px;
+}
+.fech-block-banner-icon { font-size: 18px; flex-shrink: 0; }
+.fech-block-banner-text { flex: 1; }
+.fech-block-banner-text strong { display: block; margin-bottom: 2px; }
+.fech-block-banner a { color: #EF4444; text-decoration: underline; }
+
+.fech-ranking-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fech-ranking-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.fech-ranking-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.fech-ranking-table tr:last-child td { border-bottom: none; }
+
+.fech-zone-promo td { background: rgba(34,197,94,0.07); }
+.fech-zone-releg td { background: rgba(239,68,68,0.07); }
+
+.fech-tiebreak-note {
+  cursor: help;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+  opacity: 0.7;
+}
+.fech-tiebreak-note:hover { opacity: 1; color: var(--color-gold); }
+
+.fech-inelig-tag {
+  display: inline-block;
+  background: rgba(239,68,68,0.15);
+  color: #EF4444;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.fech-blocked { opacity: 0.45; pointer-events: none; }
+.fech-blocked .fechamento-confirm-box { border-color: var(--color-border); background: rgba(255,255,255,0.03); }
+
+/* Sprint 14 — Impacto no ranking */
+.impact-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.impact-modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  width: 100%; max-width: 540px;
+  max-height: 80vh; overflow-y: auto;
+}
+.impact-modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.impact-modal-title { font-size: 15px; font-weight: 700; }
+.impact-modal-close { background: none; border: none; color: var(--color-text-muted); font-size: 20px; cursor: pointer; padding: 0 4px; }
+.impact-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.impact-table th {
+  text-align: left; padding: 6px 8px;
+  font-size: 11px; color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+}
+.impact-table td { padding: 8px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.impact-table tr:last-child td { border-bottom: none; }
+.impact-up   { color: #22C55E; font-weight: 700; }
+.impact-down { color: #EF4444; font-weight: 700; }
+.impact-same { color: var(--color-text-muted); }

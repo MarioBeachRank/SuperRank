@@ -3968,6 +3968,14 @@ async function renderAdminResultados(content) {
               title="Forçar confirmação sem aguardar todos os atletas">
               ✓ Confirmar como ADM
             </button>` : '';
+          const impactBtn = (existing && existing.status === 'pending_confirmation') ? `
+            <button class="btn btn-ghost btn-sm btn-ver-impacto"
+              data-rid="${existing.id}"
+              data-season="${activeSeason.id}"
+              style="color:var(--color-text-muted);"
+              title="Ver como este resultado alteraria o ranking">
+              📊 Ver impacto
+            </button>` : '';
 
           html += `
             <div class="group-card" data-cat="${cat}" data-status="${cardStatus}" style="margin:var(--space-sm) var(--space-md);border:var(--border);border-radius:var(--radius-md);overflow:hidden;">
@@ -3995,6 +4003,7 @@ async function renderAdminResultados(content) {
                       data-round="${rnd.id}" data-cat="${cat}" data-gi="${gi}"
                       data-group='${JSON.stringify(group)}'>WO</button>` : ''}
                   ${adminConfirmBtn}
+                  ${impactBtn}
                 </div>
               </div>
             </div>`;
@@ -4101,6 +4110,25 @@ function attachResultadosListeners(body, athletesById, refresh) {
     });
   });
 
+  // Ver impacto no ranking
+  body.querySelectorAll('.btn-ver-impacto').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const rid = btn.dataset.rid;
+      const seasonId = btn.dataset.season;
+      btn.disabled = true;
+      btn.textContent = 'Calculando…';
+      try {
+        const impact = await api(`/api/seasons/${seasonId}/ranking/impact?result_id=${rid}`);
+        openImpactModal(impact);
+      } catch (err) {
+        showToast('Erro ao calcular impacto: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '📊 Ver impacto';
+      }
+    });
+  });
+
   // Resolver contestação
   body.querySelectorAll('.btn-override').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4113,6 +4141,65 @@ function attachResultadosListeners(body, athletesById, refresh) {
       });
     });
   });
+}
+
+function openImpactModal(impact) {
+  const { cat, result_id, athletes } = impact;
+  if (!athletes || !athletes.length) {
+    showToast('Nenhum atleta afetado pelo impacto.', 'info');
+    return;
+  }
+
+  const rows = athletes.map(a => {
+    const before = a.rank_before != null ? `#${a.rank_before}` : '—';
+    const after  = `#${a.rank_after}`;
+    let delta = '';
+    if (a.delta == null) {
+      delta = `<span class="impact-same">—</span>`;
+    } else if (a.delta < 0) {
+      delta = `<span class="impact-up">▲ ${Math.abs(a.delta)}</span>`;
+    } else if (a.delta > 0) {
+      delta = `<span class="impact-down">▼ ${a.delta}</span>`;
+    } else {
+      delta = `<span class="impact-same">= </span>`;
+    }
+    return `<tr>
+      <td>${escapeHtml(a.nome)}</td>
+      <td style="text-align:center;">${before}</td>
+      <td style="text-align:center;">${after}</td>
+      <td style="text-align:center;">${delta}</td>
+      <td style="text-align:right;">${a.points_after} pts</td>
+    </tr>`;
+  }).join('');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'impact-modal-overlay';
+  overlay.innerHTML = `
+    <div class="impact-modal">
+      <div class="impact-modal-header">
+        <span class="impact-modal-title">📊 Impacto no Ranking — Cat ${escapeHtml(cat)}</span>
+        <button class="impact-modal-close" id="closeImpactModal">✕</button>
+      </div>
+      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">
+        Simulação: como o ranking ficaria se este resultado fosse confirmado agora.
+      </p>
+      <table class="impact-table">
+        <thead>
+          <tr>
+            <th>Atleta</th>
+            <th style="text-align:center;">Antes</th>
+            <th style="text-align:center;">Após</th>
+            <th style="text-align:center;">Variação</th>
+            <th style="text-align:right;">Pontos</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('#closeImpactModal').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
 }
 
 function openScoreForm(roundId, cat, gi, group, sets, athletesById, refresh) {
@@ -4281,30 +4368,65 @@ async function renderAdminFechamento(content) {
   const warnings = preview?.movements?.warnings || [];
   const projectedSizes = preview?.movements?.projected_sizes || {};
 
-  const rankingsHtml = Object.entries(preview?.rankings || {})
-    .filter(([,rows]) => rows.length)
-    .map(([cat, rows]) => `
-      <div style="margin-bottom:12px;">
-        <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-           color:var(--color-text-muted);margin-bottom:6px;">Cat ${cat}</p>
-        <div class="card" style="padding:0;overflow:hidden;">
-          <table class="ranking-table">
-            <thead><tr><th>#</th><th>Atleta</th><th class="num">Pts</th><th class="num">W</th></tr></thead>
-            <tbody>
-              ${rows.map((r, i) => `
-                <tr>
-                  <td><span class="rank-position ${['gold','silver','bronze'][i]||''}">${r.rank}</span></td>
-                  <td>${escapeHtml(r.nome)}</td>
-                  <td class="num ranking-pts">${r.points}</td>
-                  <td class="num ranking-stat">${r.wins}</td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>`).join('');
+  const openRoundsCount = preview?.open_rounds_count || 0;
+  const openRounds      = preview?.open_rounds || [];
+  const ineligible      = preview?.ineligible_warnings || [];
+  const isClosed        = activeSeason.status === 'closed';
+  const movedCount      = (preview?.summary || []).filter(e => e.action !== 'stays').length;
 
-  const isClosed = activeSeason.status === 'closed';
-  const movedCount = (preview?.summary || []).filter(e => e.action !== 'stays').length;
+  // Ranking final com notas de desempate e marcação de zona
+  const rankingsHtml = Object.entries(preview?.rankings || {})
+    .filter(([, rows]) => rows.length)
+    .map(([cat, rows]) => {
+      const n = rows.length;
+      const m = n >= 8 ? 2 : 1;
+      const promoIds = new Set(rows.slice(0, n > 1 ? m : 0).map(r => r.athlete_id));
+      const relegIds = new Set(rows.slice(Math.max(0, n - m)).map(r => r.athlete_id));
+      return `
+        <div style="margin-bottom:14px;">
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+             color:var(--color-text-muted);margin-bottom:6px;">Cat ${cat}</p>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table class="ranking-table">
+              <thead><tr><th>#</th><th>Atleta</th><th class="num">Pts</th><th class="num">W</th><th class="num">R</th></tr></thead>
+              <tbody>
+                ${rows.map((r, i) => {
+                  const inPromo = promoIds.has(r.athlete_id) && cat !== 'A';
+                  const inReleg = relegIds.has(r.athlete_id) && cat !== 'D' && n > 1;
+                  const rowCls  = inPromo ? 'fech-zone-promo' : inReleg ? 'fech-zone-releg' : '';
+                  const ineligWarn = ineligible.find(x => x.athlete_id === r.athlete_id) ? ' <span class="fech-inelig-tag" title="Sem rodadas jogadas — verifique elegibilidade">⚠ 0 rodadas</span>' : '';
+                  const tieNote = r.tiebreak_note ? `<span class="fech-tiebreak-note" title="${escapeHtml(r.tiebreak_note)}">≡</span>` : '';
+                  return `
+                    <tr class="${rowCls}">
+                      <td><span class="rank-position ${['gold','silver','bronze'][i]||''}">${r.rank}</span></td>
+                      <td>${escapeHtml(r.nome)}${ineligWarn}${tieNote}</td>
+                      <td class="num ranking-pts">${r.points}</td>
+                      <td class="num ranking-stat">${r.wins}</td>
+                      <td class="num ranking-stat">${r.results_count}</td>
+                    </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
+  // Banner de bloqueio por rodadas abertas
+  const openRoundsBanner = openRoundsCount > 0 ? `
+    <div class="alert alert-error fech-block-banner">
+      <strong>Fechamento bloqueado.</strong>
+      ${openRoundsCount} rodada${openRoundsCount > 1 ? 's' : ''} ainda aberta${openRoundsCount > 1 ? 's' : ''}:
+      ${openRounds.map(r => `Rodada ${r.round_number}`).join(', ')}.
+      Feche todas as rodadas antes de encerrar a temporada.
+      <a href="#admin/rodada" style="margin-left:8px;">Ir para Rodadas →</a>
+    </div>` : '';
+
+  // Avisos de inelegibilidade
+  const ineligBanner = ineligible.length > 0 ? `
+    <div class="alert alert-warning">
+      <strong>Atenção — atletas na zona de movimento sem rodadas jogadas:</strong>
+      ${ineligible.map(w => `<br>• ${escapeHtml(w.nome)} (${catLabel(w.cat)} · ${w.rank}° · ${w.action === 'promoted' ? 'seria promovido' : w.action === 'relegated' ? 'seria rebaixado' : 'permanece'})`).join('')}
+    </div>` : '';
 
   content.innerHTML = `
     <div class="section-header">
@@ -4314,20 +4436,27 @@ async function renderAdminFechamento(content) {
       </div>
     </div>
 
+    ${openRoundsBanner}
+    ${ineligBanner}
     ${warnings.map(w => `<div class="fechamento-warning">⚠ ${escapeHtml(w)}</div>`).join('')}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;">
       <div>
-        <p style="font-size:14px;font-weight:700;margin-bottom:12px;">Ranking Final</p>
+        <p style="font-size:14px;font-weight:700;margin-bottom:12px;">
+          Ranking Final
+          <span style="font-size:11px;font-weight:400;color:var(--color-text-muted);margin-left:8px;">
+            ≡ = desempate · ⚠ = sem rodadas
+          </span>
+        </p>
         ${rankingsHtml || '<p class="placeholder-text">Sem resultados ainda.</p>'}
       </div>
       <div>
         <p style="font-size:14px;font-weight:700;margin-bottom:12px;">Plano de Movimentação</p>
         ${buildMovementTable(preview?.summary)}
-        ${Object.entries(projectedSizes).filter(([,n]) => n > 0).length ? `
+        ${Object.entries(projectedSizes).filter(([, n]) => n > 0).length ? `
           <div class="card" style="margin-top:12px;">
             <p style="font-size:12px;font-weight:700;color:var(--color-text-muted);margin-bottom:8px;">Tamanhos Projetados</p>
-            ${Object.entries(projectedSizes).filter(([,n]) => n > 0).map(([cat, n]) => `
+            ${Object.entries(projectedSizes).filter(([, n]) => n > 0).map(([cat, n]) => `
               <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:var(--border);font-size:13px;">
                 <span>${catLabel(cat)}</span><strong>${n} titular${n !== 1 ? 'es' : ''}</strong>
               </div>`).join('')}
@@ -4336,15 +4465,19 @@ async function renderAdminFechamento(content) {
     </div>
 
     ${!isClosed ? `
-      <div class="fechamento-confirm-box">
+      <div class="fechamento-confirm-box ${openRoundsCount > 0 ? 'fech-blocked' : ''}">
         <p style="font-size:15px;font-weight:700;color:var(--color-accent);margin-bottom:8px;">Confirmar Fechamento</p>
         <p style="font-size:13px;margin-bottom:12px;">
           Esta ação é irreversível. Os atletas serão movimentados e a temporada será encerrada.
         </p>
         ${warnings.length ? `<p style="font-size:12px;color:#BA7517;margin-bottom:12px;">⚠ ${warnings.length} aviso(s) — revise antes de confirmar.</p>` : ''}
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-          <button id="btn-fechar-temporada" class="btn btn-primary">Fechar Temporada</button>
-          <span style="font-size:12px;color:var(--color-text-muted);">Movimenta ${movedCount} atleta(s)</span>
+          <button id="btn-fechar-temporada" class="btn btn-primary" ${openRoundsCount > 0 ? 'disabled' : ''}>
+            Fechar Temporada
+          </button>
+          <span style="font-size:12px;color:var(--color-text-muted);">
+            ${openRoundsCount > 0 ? `Bloqueado — ${openRoundsCount} rodada(s) aberta(s)` : `Movimenta ${movedCount} atleta(s)`}
+          </span>
         </div>
         <p id="fechamento-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
       </div>` : `

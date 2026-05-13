@@ -1729,11 +1729,17 @@ def fechamento_preview(season_id):
 
     athletes_db = read_json("athletes.json")
     results_db  = read_json("results.json")
-    athletes_by_id = {a["id"]: a for a in athletes_db["data"]}
+    rounds_db   = read_json("rounds.json")
+
+    # Rodadas abertas desta temporada (bloqueio)
+    open_rounds = [
+        r for r in rounds_db["data"]
+        if r.get("season_id") == season_id and r.get("status") != "closed"
+    ]
 
     category_setup = season.get("category_setup", {})
 
-    # Monta rankings por categoria
+    # Monta rankings por categoria com notas de desempate
     season_rankings: dict[str, list] = {}
     for cat in CATEGORIES:
         titular_ids = category_setup.get(cat, {}).get("titular_ids", [])
@@ -1744,18 +1750,102 @@ def fechamento_preview(season_id):
                 results_db["data"],
                 category=cat,
                 season_id=season_id,
+                include_tiebreak_notes=True,
             )
 
     movements = compute_movements(season_rankings)
     names = {a["id"]: a.get("nome", a["id"]) for a in athletes_db["data"]}
     summary = movement_summary(movements, names)
 
+    # Sinaliza atletas com 0 rodadas jogadas que estão em zona de movimento
+    from engines.category_engine import movement_count
+    ineligible_warnings = []
+    moved_ids = set(movements.get("promotions", {}).keys()) | set(movements.get("relegations", {}).keys())
+    for cat, ranking in season_rankings.items():
+        n = len(ranking)
+        m = movement_count(n)
+        boundary_ids = (
+            {r["athlete_id"] for r in ranking[:m]} |
+            {r["athlete_id"] for r in ranking[max(0, n - m):]}
+        )
+        for entry in ranking:
+            if entry["athlete_id"] in boundary_ids and entry["results_count"] == 0:
+                ineligible_warnings.append({
+                    "athlete_id": entry["athlete_id"],
+                    "nome": entry["nome"],
+                    "cat": cat,
+                    "rank": entry["rank"],
+                    "action": "promoted" if entry["athlete_id"] in movements.get("promotions", {}) else
+                              "relegated" if entry["athlete_id"] in movements.get("relegations", {}) else "stays",
+                })
+
     return jsonify({
-        "season_id": season_id,
-        "season_name": season["name"],
-        "rankings": season_rankings,
-        "movements": movements,
-        "summary": summary,
+        "season_id":          season_id,
+        "season_name":        season["name"],
+        "open_rounds_count":  len(open_rounds),
+        "open_rounds":        [{"round_number": r.get("round_number"), "end_date": r.get("end_date")} for r in open_rounds],
+        "rankings":           season_rankings,
+        "movements":          movements,
+        "summary":            summary,
+        "ineligible_warnings": ineligible_warnings,
+    })
+
+
+@app.route("/api/seasons/<season_id>/ranking/impact")
+@require_admin
+def ranking_impact(season_id):
+    """
+    Preview de impacto de um resultado no ranking.
+    ?result_id=X — compara ranking sem vs. com o resultado confirmado.
+    """
+    from engines.ranking_engine import compute_ranking
+
+    result_id = request.args.get("result_id")
+    if not result_id:
+        return jsonify({"error": "result_id obrigatório"}), 400
+
+    seasons_db  = read_json("seasons.json")
+    season = next((s for s in seasons_db["data"] if s["id"] == season_id), None)
+    if not season:
+        return jsonify({"error": "Temporada não encontrada"}), 404
+
+    results_db  = read_json("results.json")
+    target = next((r for r in results_db["data"] if r["id"] == result_id), None)
+    if not target:
+        return jsonify({"error": "Resultado não encontrado"}), 404
+
+    cat = target.get("cat")
+    athletes_db = read_json("athletes.json")
+    titular_ids = season.get("category_setup", {}).get(cat, {}).get("titular_ids", [])
+    athletes_in_cat = [a for a in athletes_db["data"] if a["id"] in titular_ids]
+
+    # Ranking ANTES: exclui o resultado em questão (independente do status atual)
+    results_before = [r for r in results_db["data"] if r["id"] != result_id]
+    ranking_before = compute_ranking(athletes_in_cat, results_before, category=cat, season_id=season_id)
+
+    # Ranking DEPOIS: inclui o resultado como confirmed
+    target_as_confirmed = {**target, "status": "confirmed"}
+    results_after = [r if r["id"] != result_id else target_as_confirmed for r in results_db["data"]]
+    ranking_after = compute_ranking(athletes_in_cat, results_after, category=cat, season_id=season_id)
+
+    before_map = {e["athlete_id"]: e["rank"] for e in ranking_before}
+    impact = []
+    for entry in ranking_after:
+        prev_rank = before_map.get(entry["athlete_id"])
+        delta = (prev_rank - entry["rank"]) if prev_rank is not None else None
+        impact.append({
+            "athlete_id":   entry["athlete_id"],
+            "nome":         entry["nome"],
+            "rank_before":  prev_rank,
+            "rank_after":   entry["rank"],
+            "delta":        delta,
+            "points_after": entry["points"],
+        })
+
+    return jsonify({
+        "result_id":  result_id,
+        "cat":        cat,
+        "impact":     impact,
     })
 
 
@@ -1773,6 +1863,18 @@ def fechamento_apply(season_id):
 
     if season.get("status") == "closed":
         return jsonify({"error": "Temporada já encerrada"}), 400
+
+    rounds_db = read_json("rounds.json")
+    open_rounds = [
+        r for r in rounds_db["data"]
+        if r.get("season_id") == season_id and r.get("status") != "closed"
+    ]
+    if open_rounds:
+        nums = ", ".join(str(r.get("round_number", "?")) for r in open_rounds)
+        return jsonify({
+            "error": f"Existem {len(open_rounds)} rodada(s) ainda abertas (Rodada {nums}). "
+                     "Feche todas as rodadas antes de encerrar a temporada."
+        }), 400
 
     athletes_db = read_json("athletes.json")
     results_db  = read_json("results.json")

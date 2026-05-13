@@ -184,6 +184,43 @@ def apply_tiebreak_cascade(
 
 
 # ---------------------------------------------------------------------------
+# Explicação de desempate entre dois atletas adjacentes (Art. 12)
+# ---------------------------------------------------------------------------
+
+def explain_separation(
+    a: str,
+    b: str,
+    stats_map: dict[str, dict],
+    all_results: list[dict],
+) -> str:
+    """
+    Retorna o critério Art. 12 que colocou `a` à frente de `b` (mesma pontuação).
+    Usado para exibir desempate explícito no fechamento.
+    """
+    sa, sb = stats_map[a], stats_map[b]
+
+    if sa["wins"] != sb["wins"]:
+        return f"Crit. 1 — Sets vencidos ({sa['wins']} vs {sb['wins']})"
+
+    graph = _build_direct_graph([a, b], all_results)
+    if not detect_cycle([a, b], graph):
+        dw_a = len(graph.get(a, set()) & {b})
+        dw_b = len(graph.get(b, set()) & {a})
+        if dw_a != dw_b:
+            return "Crit. 2 — Confronto direto"
+
+    sal_a = sa["games_won"] - sa["games_lost"]
+    sal_b = sb["games_won"] - sb["games_lost"]
+    if sal_a != sal_b:
+        return f"Crit. 3 — Saldo de games ({sal_a:+d} vs {sal_b:+d})"
+
+    if sa["games_won"] != sb["games_won"]:
+        return f"Crit. 4 — Games ganhos ({sa['games_won']} vs {sb['games_won']})"
+
+    return "Crit. 5 — Sorteio eletrônico"
+
+
+# ---------------------------------------------------------------------------
 # compute_ranking — ponto de entrada principal
 # ---------------------------------------------------------------------------
 
@@ -192,6 +229,7 @@ def compute_ranking(
     results: list[dict],
     category: str | None = None,
     season_id: str | None = None,
+    include_tiebreak_notes: bool = False,
 ) -> list[dict]:
     """
     Retorna ranking ordenado para uma categoria/temporada.
@@ -233,6 +271,15 @@ def compute_ranking(
             "saldo": s["games_won"] - s["games_lost"],
             "results_count": len(s["results_ids"]),
         })
+
+    if include_tiebreak_notes:
+        for i in range(1, len(ranking)):
+            prev, curr = ranking[i - 1], ranking[i]
+            if prev["points"] == curr["points"]:
+                curr["tiebreak_note"] = explain_separation(
+                    prev["athlete_id"], curr["athlete_id"], stats_map, relevant
+                )
+
     return ranking
 
 
