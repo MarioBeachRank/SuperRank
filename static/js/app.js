@@ -841,10 +841,12 @@ async function renderPublicoGrupos(container, season) {
   container.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando grupos…</p>`;
 
   let rounds = [], athletes = [];
-  try { [rounds, athletes] = await Promise.all([
+  const [roundsRes, athletesRes] = await Promise.allSettled([
     api(`/api/seasons/${season.id}/rounds`),
     api('/api/athletes'),
-  ]); } catch (_) {}
+  ]);
+  if (roundsRes.status  === 'fulfilled') rounds   = roundsRes.value;
+  if (athletesRes.status === 'fulfilled') athletes = athletesRes.value;
 
   rounds.sort((a, b) => b.round_number - a.round_number);
 
@@ -7164,13 +7166,14 @@ async function renderAdminPendencias(content) {
   renderSkeletonCards(content, 4);
 
   let athletes = [], contestedData = {}, stats = {};
-  try {
-    [athletes, contestedData, stats] = await Promise.all([
-      api('/api/athletes'),
-      api('/api/admin/contested'),
-      api('/api/admin/stats'),
-    ]);
-  } catch (_) {}
+  const [athRes, contRes, statRes] = await Promise.allSettled([
+    api('/api/athletes'),
+    api('/api/admin/contested'),
+    api('/api/admin/stats'),
+  ]);
+  if (athRes.status  === 'fulfilled') athletes     = athRes.value;
+  if (contRes.status === 'fulfilled') contestedData = contRes.value;
+  if (statRes.status === 'fulfilled') stats         = statRes.value;
 
   const pendingAthletes = athletes.filter(a => !a.admin_confirmed);
   const contestedCount  = contestedData.count || 0;
