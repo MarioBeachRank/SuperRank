@@ -128,6 +128,9 @@ def apply_tiebreak_cascade(
     if len(top1) == 1:
         return top1 + (apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else [])
 
+    def _rest1_resolved():
+        return apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else []
+
     # Critério 2: confronto direto (sem ciclo)
     graph = _build_direct_graph(top1, all_results)
     if not detect_cycle(top1, graph):
@@ -138,8 +141,13 @@ def apply_tiebreak_cascade(
         rest2 = [a for a in top1 if a not in top2]
         if len(top2) == 1:
             sub = (apply_tiebreak_cascade(rest2, all_results, stats_map, seed) if rest2 else [])
-            return top2 + sub + (apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else [])
-        top1 = top2  # continua desempatando o subgrupo
+            return top2 + sub + _rest1_resolved()
+        if rest2:
+            # top2 venceu mais confrontos diretos que rest2 → todos de top2 ficam à frente de rest2
+            resolved_top2 = apply_tiebreak_cascade(top2, all_results, stats_map, seed)
+            resolved_rest2 = apply_tiebreak_cascade(rest2, all_results, stats_map, seed)
+            return resolved_top2 + resolved_rest2 + _rest1_resolved()
+        top1 = top2  # rest2 vazio: todos empataram no crit 2, continua com crit 3
 
     # Critério 3: saldo de games
     def saldo(a): return stats_map[a]["games_won"] - stats_map[a]["games_lost"]
@@ -148,7 +156,12 @@ def apply_tiebreak_cascade(
     rest3 = [a for a in top1 if a not in top3]
     if len(top3) == 1:
         sub = (apply_tiebreak_cascade(rest3, all_results, stats_map, seed) if rest3 else [])
-        return top3 + sub + (apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else [])
+        return top3 + sub + _rest1_resolved()
+    if rest3:
+        # top3 tem saldo melhor que rest3 → separa e resolve cada grupo independentemente
+        resolved_top3 = apply_tiebreak_cascade(top3, all_results, stats_map, seed)
+        resolved_rest3 = apply_tiebreak_cascade(rest3, all_results, stats_map, seed)
+        return resolved_top3 + resolved_rest3 + _rest1_resolved()
 
     # Critério 4: games ganhos
     max_gw = max(stats_map[a]["games_won"] for a in top3)
@@ -156,14 +169,18 @@ def apply_tiebreak_cascade(
     rest4 = [a for a in top3 if a not in top4]
     if len(top4) == 1:
         sub = (apply_tiebreak_cascade(rest4, all_results, stats_map, seed) if rest4 else [])
-        return top4 + sub + (apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else [])
+        return top4 + sub + _rest1_resolved()
+    if rest4:
+        # top4 tem mais games ganhos que rest4 → separa e resolve cada grupo independentemente
+        resolved_top4 = apply_tiebreak_cascade(top4, all_results, stats_map, seed)
+        resolved_rest4 = apply_tiebreak_cascade(rest4, all_results, stats_map, seed)
+        return resolved_top4 + resolved_rest4 + _rest1_resolved()
 
     # Critério 5: sorteio
     rng = random.Random(seed)
     shuffled = list(top4)
     rng.shuffle(shuffled)
-    sub_rest = (apply_tiebreak_cascade(rest4, all_results, stats_map, seed) if rest4 else [])
-    return shuffled + sub_rest + (apply_tiebreak_cascade(rest1, all_results, stats_map, seed) if rest1 else [])
+    return shuffled + _rest1_resolved()
 
 
 # ---------------------------------------------------------------------------

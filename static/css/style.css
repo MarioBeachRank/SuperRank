@@ -529,6 +529,36 @@ select.field-input {
 }
 
 .mesa-hero-rank-pos   { font-size: 52px; font-weight: 800; color: var(--color-primary); line-height: 1; letter-spacing: -2px; }
+
+.rank-delta-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 20px;
+  letter-spacing: .02em;
+}
+.rank-delta-up   { background: rgba(34,197,94,0.15);  color: #16A34A; }
+.rank-delta-down { background: rgba(239,68,68,0.12);  color: #DC2626; }
+.rank-delta-same { background: rgba(255,255,255,0.07); color: var(--color-text-muted); }
+
+/* Zonas de promoção/rebaixamento na tabela pública */
+.ranking-table tr.pub-zone-promo td { background: rgba(34,197,94,0.07); }
+.ranking-table tr.pub-zone-releg td { background: rgba(239,68,68,0.07); }
+
+/* Indicador de evolução na tabela de ranking */
+.rank-tbl-delta {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 5px;
+  vertical-align: middle;
+  letter-spacing: .02em;
+}
+.rank-tbl-up   { background: rgba(34,197,94,0.15);  color: #16A34A; }
+.rank-tbl-down { background: rgba(239,68,68,0.12);  color: #DC2626; }
 .mesa-hero-rank-label { font-size: 12px; color: var(--color-text-muted); padding-bottom: 8px; }
 .mesa-hero-pts-block  { padding-bottom: 8px; }
 .mesa-hero-pts-value  { font-size: 22px; font-weight: 700; color: var(--color-gold); line-height: 1; }
@@ -630,6 +660,7 @@ select.field-input {
 .badge-active     { background: rgba(81,207,102,0.15); color: var(--color-cat-b); }
 .badge-closed     { background: rgba(255,255,255,0.08); color: var(--color-text-muted); }
 .badge-pending    { background: rgba(255,179,0,0.15);  color: var(--color-gold); }
+.badge-overdue    { background: rgba(217,64,64,0.15);  color: #D94040; border: 1px solid rgba(217,64,64,0.30); }
 
 .badge-promoted   { background: rgba(81,207,102,0.15);  color: #69DB7C; border: 1px solid rgba(81,207,102,0.30); }
 .badge-relegated  { background: rgba(252,92,125,0.15);  color: #FC5C7D; border: 1px solid rgba(252,92,125,0.30); }
@@ -1610,6 +1641,18 @@ select.field-input {
 
 .history-score-total { font-weight: 700; color: var(--color-primary); min-width: 28px; text-align: right; font-size: 13px; }
 
+/* Set scorelines — placar real dos jogos */
+.set-scorelines { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-bottom: var(--border); margin-bottom: 4px; }
+.set-scoreline { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); }
+.set-team { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.set-team-right { text-align: right; }
+.set-team.set-winner { color: var(--color-text); font-weight: 700; }
+.set-score { font-size: 14px; font-weight: 700; color: var(--color-primary); text-align: center; white-space: nowrap; letter-spacing: 1px; }
+.set-sep { color: var(--color-text-muted); font-weight: 400; margin: 0 2px; }
+
+/* Round period label */
+.round-period { font-size: 12px; color: var(--color-text-muted); font-weight: 400; }
+
 /* Personal match history (Mesa) */
 .match-card { background: var(--color-surface); border: var(--border); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 10px; box-shadow: var(--shadow-card); }
 .match-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -2341,3 +2384,216 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   background: var(--color-surface-2);
   border-color: var(--color-primary);
 }
+
+/* =====================================================================
+   Ligas / Ranking Contínuo — admin panel
+   ===================================================================== */
+
+.liga-card {
+  background: var(--color-surface);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  margin-bottom: 14px;
+}
+.liga-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.liga-card-name { font-size: 15px; font-weight: 700; flex: 1; }
+.liga-status-badge {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 20px; letter-spacing: .04em;
+}
+.liga-status-active  { background: rgba(81,207,102,.18); color: #51CF66; }
+.liga-status-closed  { background: rgba(255,107,53,.15);  color: var(--color-primary); }
+.liga-status-pending { background: rgba(123,155,181,.15); color: var(--color-text-muted); }
+.liga-card-meta { font-size: 12px; color: var(--color-text-muted); margin-bottom: 8px; }
+.liga-card-awards { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.liga-award-chip {
+  font-size: 11px; padding: 2px 8px;
+  background: rgba(255,107,53,.12); color: var(--color-primary);
+  border-radius: 20px; white-space: nowrap;
+}
+.liga-card-actions { display: flex; gap: 8px; }
+
+/* Liga form */
+.liga-form-card { margin-bottom: 20px; }
+.liga-awards-grid {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 4px;
+}
+.liga-award-toggle {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  background: var(--color-surface-2);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer; font-size: 13px;
+  transition: border-color 0.12s, background 0.12s;
+  user-select: none;
+}
+.liga-award-toggle input { display: none; }
+.liga-award-toggle.active {
+  border-color: var(--color-primary);
+  background: rgba(255,107,53,.12);
+}
+.liga-award-icon { font-size: 18px; }
+.liga-award-label { font-weight: 600; }
+
+/* Liga estimate badge */
+.liga-estimate-badge {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: rgba(255,107,53,.08);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  min-height: 28px;
+}
+.liga-estimate-badge strong { color: var(--color-primary); }
+.liga-estimate-inline { color: var(--color-primary); font-weight: 700; font-size: 12px; }
+
+/* Seasons inside liga card */
+.liga-seasons-wrap { margin-top: 12px; border-top: 1px solid var(--color-border); padding-top: 10px; }
+.liga-seasons-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.liga-seasons-count { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
+.liga-seasons-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.liga-season-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+.liga-season-name  { font-weight: 700; flex: 1; min-width: 120px; }
+.liga-season-dates { color: var(--color-text-muted); }
+.liga-season-info  { color: var(--color-text-muted); }
+.liga-season-status { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 7px; border-radius: 20px; }
+
+/* Season sub-form */
+.liga-season-form {
+  background: var(--color-surface-2);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-top: 8px;
+}
+
+/* =====================================================================
+   Award cards — premiações anuais
+   ===================================================================== */
+
+.awards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.award-card {
+  background: var(--color-surface);
+  border: var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.award-card.award-filled { border-color: rgba(255,107,53,.4); }
+.award-card.award-empty  { opacity: .55; }
+.award-card.award-inactive { opacity: .35; }
+.award-icon  { font-size: 32px; margin-bottom: 4px; }
+.award-name  { font-size: 12px; font-weight: 700; text-transform: uppercase;
+               letter-spacing: .04em; color: var(--color-text-muted); }
+.award-winner { font-size: 15px; font-weight: 700; color: var(--color-text); }
+.award-stat  { font-size: 11px; color: var(--color-primary); }
+
+/* =====================================================================
+   Lesões e Convidados
+   ===================================================================== */
+
+.lesoes-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-lg); }
+@media (min-width: 900px) { .lesoes-grid { grid-template-columns: 380px 1fr 1fr; } }
+
+.injury-card {
+  background: var(--color-surface);
+  border: var(--border);
+  border-left: 3px solid #D94040;
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: 10px;
+}
+.injury-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.injury-type-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; }
+.injury-athlete { font-size: 14px; font-weight: 700; color: var(--color-text); }
+.injury-cat { }
+.injury-card-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--color-text-muted); }
+
+.guest-request-card {
+  background: var(--color-surface);
+  border: var(--border);
+  border-left: 3px solid var(--color-gold);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: 10px;
+}
+.guest-request-header { font-size: 13px; font-weight: 700; display: flex; align-items: center; }
+.suggestion-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: var(--border); font-size: 13px; flex-wrap: wrap; }
+.suggestion-row:last-child { border-bottom: none; }
+
+.guest-link-box {
+  background: var(--color-surface-2);
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-family: monospace;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--color-text);
+  user-select: all;
+  cursor: text;
+  margin-bottom: 4px;
+}
+
+.guest-request-banner {
+  background: rgba(255,179,0,0.10);
+  border: 1px solid rgba(255,179,0,0.30);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-top: var(--space-lg);
+}
+.guest-request-banner-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-gold);
+  margin-bottom: 8px;
+}
+.guest-suggest-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.guest-suggest-form .form-input { font-size: 13px; }
+
+/* =====================================================================
+   Ranking: zonas de promoção/rebaixamento
+   ===================================================================== */
+.mesa-ranking-table tr.zone-promo td { background: rgba(34,197,94,0.07); }
+.mesa-ranking-table tr.zone-promo.mesa-ranking-me td { background: rgba(34,197,94,0.14); }
+.mesa-ranking-table tr.zone-releg td { background: rgba(239,68,68,0.07); }
+.mesa-ranking-table tr.zone-releg.mesa-ranking-me td { background: rgba(239,68,68,0.14); }
+
+.mesa-ranking-table tr.zone-separator td { padding: 3px 12px; background: var(--color-surface-2); }
+.zone-sep-promo { font-size: 10px; font-weight: 700; color: #22C55E; letter-spacing:.04em; text-align: center; }
+.zone-sep-releg { font-size: 10px; font-weight: 700; color: #EF4444; letter-spacing:.04em; text-align: center; }
+
+/* =====================================================================
+   Histórico: score real de cada set
+   ===================================================================== */
+.match-set-score {
+  display: inline-block;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 5px;
+  vertical-align: middle;
+}
+.match-set-score.win  { background: rgba(34,197,94,0.18); color: #16A34A; }
+.match-set-score.loss { background: rgba(239,68,68,0.12); color: #EF4444; }
+.match-set-score.wo   { background: rgba(255,255,255,0.08); color: var(--color-text-muted); }

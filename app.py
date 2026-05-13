@@ -146,6 +146,21 @@ def auth_atleta():
         None,
     )
     if not atleta:
+        # Fallback: check if this is a registered guest
+        gr_db = read_json("guest_requests.json")
+        for gr in gr_db["data"]:
+            cg = gr.get("confirmed_guest") or {}
+            if (cg.get("telefone") == telefone
+                    and cg.get("pin_hash") == ph
+                    and cg.get("registered")):
+                session["atleta_id"] = cg["guest_id"]
+                session["is_guest"]  = True
+                session["is_admin"]  = False
+                return jsonify({"ok": True, "atleta": {
+                    "id":     cg["guest_id"],
+                    "nome":   cg["nome_display"],
+                    "apelido": cg["nome_display"],
+                }})
         return jsonify({"error": "Telefone ou PIN inválidos"}), 401
 
     session["atleta_id"] = atleta["id"]
@@ -354,6 +369,7 @@ def seasons_create():
     round_duration_days = int(body.get("round_duration_days", 10))
     location_mode = body.get("location_mode", "single")
     location = (body.get("location") or "Clube do Play").strip()
+    liga_id = (body.get("liga_id") or "").strip() or None
 
     if not name:
         return jsonify({"error": "Nome da temporada é obrigatório"}), 400
@@ -365,7 +381,6 @@ def seasons_create():
         return jsonify({"error": "Número de rodadas deve ser entre 2 e 5"}), 400
     if not (1 <= round_duration_days <= 60):
         return jsonify({"error": "Duração de rodada deve ser entre 1 e 60 dias"}), 400
-    # Auto-calculate end_date if not provided or if calculated is later than provided
     from datetime import timedelta as _td2
     _auto_end = (datetime.strptime(start_date, "%Y-%m-%d") + _td2(days=rounds_total * round_duration_days - 1)).strftime("%Y-%m-%d")
     if not end_date:
@@ -374,6 +389,12 @@ def seasons_create():
         return jsonify({"error": "Data de fim deve ser posterior à de início"}), 400
     if location_mode not in ("single", "multiple"):
         return jsonify({"error": "Modo de local inválido"}), 400
+
+    if liga_id:
+        ligas_db = read_json("ligas.json")
+        liga_obj = next((l for l in ligas_db["data"] if l["id"] == liga_id), None)
+        if not liga_obj:
+            return jsonify({"error": "Liga não encontrada"}), 404
 
     season = {
         "id": str(uuid.uuid4()),
@@ -386,7 +407,7 @@ def seasons_create():
         "status": "pending",
         "location_mode": location_mode,
         "location": location,
-        # Art. 5: cada categoria começa vazia; admin preenche via /categories
+        "liga_id": liga_id,
         "category_setup": {
             cat: {"titular_ids": [], "reserva_ids": []}
             for cat in CATEGORIES
@@ -396,6 +417,16 @@ def seasons_create():
     db = read_json("seasons.json")
     db["data"].append(season)
     write_json("seasons.json", db)
+
+    if liga_id:
+        ligas_db = read_json("ligas.json")
+        liga_obj = next((l for l in ligas_db["data"] if l["id"] == liga_id), None)
+        if liga_obj:
+            liga_obj.setdefault("seasons", [])
+            if season["id"] not in liga_obj["seasons"]:
+                liga_obj["seasons"].append(season["id"])
+            write_json("ligas.json", ligas_db)
+
     return jsonify(season), 201
 
 
@@ -528,8 +559,27 @@ def category_update(season_id, cat):
 # Rodadas
 # ---------------------------------------------------------------------------
 
+def _guest_display_map() -> dict:
+    """Retorna {guest_id: {'nome': nome_display, 'apelido': nome_display}} de todos os convidados."""
+    try:
+        gr_db = read_json("guest_requests.json")
+    except Exception:
+        return {}
+    result = {}
+    for gr in gr_db.get("data", []):
+        cg = gr.get("confirmed_guest") or {}
+        gid = cg.get("guest_id")
+        if gid:
+            result[gid] = {"nome": cg.get("nome_display", gid), "apelido": cg.get("nome_display", gid),
+                           "telefone": cg.get("telefone")}
+    return result
+
+
 def _enrich_round(rnd: dict, athletes_by_id: dict) -> dict:
     """Adiciona nomes dos atletas aos grupos e aos sets para consumo do frontend."""
+    # Merge guest names so guest_* IDs resolve correctly
+    combined = {**athletes_by_id, **_guest_display_map()}
+    athletes_by_id = combined
     enriched = dict(rnd)
 
     enriched["groups_named"] = {
@@ -991,6 +1041,9 @@ def get_ranking(season_id):
     category_setup = season.get("category_setup", {})
     cats = [cat_filter] if cat_filter else CATEGORIES
 
+    rounds_db    = read_json("rounds.json")
+    round_num_map = {r["id"]: r.get("round_number", 0) for r in rounds_db["data"]}
+
     response: dict[str, list] = {}
     for cat in cats:
         setup = category_setup.get(cat, {})
@@ -999,12 +1052,36 @@ def get_ranking(season_id):
             {**a, "nome": _display_name(a)}
             for a in athletes_db["data"] if a["id"] in titular_ids
         ]
-        response[cat] = compute_ranking(
-            athletes_in_cat,
-            results_db["data"],
-            category=cat,
-            season_id=season_id,
+
+        current = compute_ranking(
+            athletes_in_cat, results_db["data"], category=cat, season_id=season_id,
         )
+
+        # Ranking anterior: exclui os resultados da última rodada disputada nesta cat
+        cat_confirmed = [
+            r for r in results_db["data"]
+            if r.get("status") == "confirmed"
+            and r.get("season_id") == season_id
+            and r.get("cat") == cat
+        ]
+        prev_rank_map: dict[str, int] = {}
+        if cat_confirmed:
+            max_rnd = max(round_num_map.get(r.get("round_id", ""), 0) for r in cat_confirmed)
+            latest_round_ids = {
+                r["id"] for r in cat_confirmed
+                if round_num_map.get(r.get("round_id", ""), 0) == max_rnd
+            }
+            prev_results = [r for r in results_db["data"] if r["id"] not in latest_round_ids]
+            prev_ranking = compute_ranking(
+                athletes_in_cat, prev_results, category=cat, season_id=season_id,
+            )
+            prev_rank_map = {e["athlete_id"]: e["rank"] for e in prev_ranking}
+
+        for entry in current:
+            prev = prev_rank_map.get(entry["athlete_id"])
+            entry["rank_delta"] = (prev - entry["rank"]) if prev is not None else None
+
+        response[cat] = current
 
     return jsonify(response)
 
@@ -1100,8 +1177,11 @@ def submit_result(round_id):
     ]
 
     submitted_by = "admin" if is_admin else athlete_id
-    # Quem lança já confirma o próprio resultado
+    # Quem lança já confirma o próprio resultado; convidados são auto-confirmados
     initial_confirmations = {} if is_admin else {athlete_id: "confirmed"}
+    for _aid in group:
+        if _aid.startswith("guest_") and _aid not in initial_confirmations:
+            initial_confirmations[_aid] = "confirmed"
 
     result_record = {
         "id": str(uuid.uuid4()),
@@ -1166,6 +1246,10 @@ def confirm_result(result_id):
 
     if result["status"] == "confirmed":
         return jsonify({"error": "Resultado já confirmado"}), 400
+
+    # Convidados não podem contestar — apenas confirmar
+    if athlete_id.startswith("guest_") and action == "contested":
+        action = "confirmed"
 
     result["confirmations"][athlete_id] = action
 
@@ -1333,11 +1417,118 @@ def _enrich_result(result: dict, athletes_by_id: dict) -> dict:
 # Contexto do atleta (mesa screens)
 # ---------------------------------------------------------------------------
 
+def _mesa_context_guest(athlete_id: str):
+    """Contexto simplificado para convidados — dados em guest_requests.json."""
+    gr_db = read_json("guest_requests.json")
+    gr = next(
+        (g for g in gr_db["data"] if (g.get("confirmed_guest") or {}).get("guest_id") == athlete_id),
+        None,
+    )
+    if not gr:
+        return jsonify({"error": "Convidado não encontrado"}), 404
+
+    cg = gr["confirmed_guest"]
+    athlete = {
+        "id": athlete_id,
+        "nome": cg["nome_display"],
+        "apelido": cg["nome_display"],
+        "telefone": cg.get("telefone", ""),
+        "is_guest": True,
+        "current_category": gr.get("cat"),
+        "status": "ativo",
+    }
+
+    rounds_db  = read_json("rounds.json")
+    seasons_db = read_json("seasons.json")
+    slots_db   = read_json("slots.json")
+
+    rnd    = next((r for r in rounds_db["data"]  if r["id"] == gr["round_id"]),  None)
+    season = next((s for s in seasons_db["data"] if s["id"] == gr["season_id"]), None)
+
+    if not rnd:
+        return jsonify({"athlete": athlete, "season": None, "round": None, "group": None,
+                        "official_slot": None, "my_slots": [], "is_guest": True,
+                        "group_slots_status": [], "pending_result": None, "eligible_slots": []})
+
+    athletes_db   = read_json("athletes.json")
+    athletes_by_id = {a["id"]: a for a in athletes_db["data"]}
+    athletes_by_id.update(_guest_display_map())
+
+    cat       = gr["cat"]
+    group_idx = gr["group_idx"]
+    groups    = rnd.get("groups", {}).get(cat, [])
+    group     = groups[group_idx] if group_idx < len(groups) else []
+
+    sets_per_group = rnd.get("groups_sets", {}).get(cat, [])
+    sets_raw       = sets_per_group[group_idx] if group_idx < len(sets_per_group) else []
+    enriched_rnd   = _enrich_round(rnd, athletes_by_id)
+    sets_named_per_group = enriched_rnd.get("groups_sets_named", {}).get(cat, [])
+    sets_named     = sets_named_per_group[group_idx] if group_idx < len(sets_named_per_group) else []
+
+    group_info = {
+        "athlete_ids": group,
+        "names": [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in group],
+        "category": cat,
+        "group_index": group_idx,
+        "sets": sets_raw,
+        "sets_named": sets_named,
+        "location": season.get("location", "—") if season else "—",
+    }
+
+    official_slots_cat = rnd.get("official_slots", {}).get(cat, [])
+    official_slot = official_slots_cat[group_idx] if group_idx < len(official_slots_cat) else None
+
+    group_slots_status = []
+    for aid in group:
+        slot_record = next(
+            (s for s in slots_db["data"] if s["round_id"] == rnd["id"] and s["athlete_id"] == aid),
+            None,
+        )
+        a_data = athletes_by_id.get(aid, {})
+        group_slots_status.append({
+            "athlete_id": aid,
+            "nome": _display_name(a_data),
+            "has_slots": bool(slot_record and slot_record.get("slots")),
+            "telefone": a_data.get("telefone"),
+        })
+
+    my_slot_record = next(
+        (s for s in slots_db["data"] if s["round_id"] == rnd["id"] and s["athlete_id"] == athlete_id),
+        None,
+    )
+
+    return jsonify({
+        "athlete": athlete,
+        "season": _safe_season(season) if season else None,
+        "round": {
+            "id": rnd["id"],
+            "round_number": rnd["round_number"],
+            "rounds_total": season["rounds_total"] if season else 0,
+            "start_date": rnd.get("start_date"),
+            "end_date": rnd.get("end_date"),
+            "deadline_slots": rnd.get("deadline_slots"),
+            "draw_authorized": rnd.get("draw_authorized", False),
+            "status": rnd["status"],
+        },
+        "group": group_info,
+        "official_slot": official_slot,
+        "my_slots": my_slot_record["slots"] if my_slot_record else [],
+        "eligible_slots": _eligible_for_round(rnd),
+        "pending_result": None,
+        "group_slots_status": group_slots_status,
+        "is_guest": True,
+    })
+
+
 @app.route("/api/mesa/context")
 @require_atleta
 def mesa_context():
     """Retorna o contexto completo do atleta logado para as telas de mesa."""
     athlete_id = session["atleta_id"]
+
+    if session.get("is_guest"):
+        return _mesa_context_guest(athlete_id)
+
     athletes_db = read_json("athletes.json")
     athlete = next((a for a in athletes_db["data"] if a["id"] == athlete_id), None)
     if not athlete:
@@ -1381,9 +1572,12 @@ def mesa_context():
             "names": [_display_name(athletes_by_id.get(aid, {"nome": aid})) for aid in group],
             "category": cat,
             "group_index": group_idx,
-            "sets": current_round.get("groups_sets", {}).get(cat, [[]])[group_idx],
-            "sets_named": _enrich_round(current_round, athletes_by_id)
-                          .get("groups_sets_named", {}).get(cat, [[]])[group_idx],
+            "sets": (current_round.get("groups_sets", {}).get(cat, []) or [[]])[group_idx]
+                    if group_idx < len(current_round.get("groups_sets", {}).get(cat, [])) else [],
+            "sets_named": (_enrich_round(current_round, athletes_by_id)
+                          .get("groups_sets_named", {}).get(cat, []) or [[]])[group_idx]
+                    if group_idx < len(_enrich_round(current_round, athletes_by_id)
+                          .get("groups_sets_named", {}).get(cat, [])) else [],
             "location": season.get("location", "—"),
         }
 
@@ -1400,6 +1594,7 @@ def mesa_context():
     # Resultado pendente de confirmação do atleta
     results_db = read_json("results.json")
     pending_result = None
+    confirmed_result = None
     if cat is not None:
         pending_result = next(
             (r for r in results_db["data"]
@@ -1412,6 +1607,17 @@ def mesa_context():
         )
         if pending_result:
             pending_result = _enrich_result(pending_result, athletes_by_id)
+
+        confirmed_raw = next(
+            (r for r in results_db["data"]
+             if r["round_id"] == current_round["id"]
+             and r["cat"] == cat
+             and r["group_idx"] == group_idx
+             and r["status"] == "confirmed"),
+            None,
+        )
+        if confirmed_raw:
+            confirmed_result = _enrich_result(confirmed_raw, athletes_by_id)
 
     # Status de slots de cada colega do grupo
     group_slots_status = []
@@ -1428,6 +1634,35 @@ def mesa_context():
                 "has_slots": bool(slot_record and slot_record.get("slots")),
                 "telefone": athletes_by_id.get(aid, {}).get("telefone"),
             })
+
+    # Evolução de posição no ranking (rank_delta)
+    rank_delta = None
+    if cat is not None:
+        from engines.ranking_engine import compute_ranking
+        cat_setup = season.get("category_setup", {})
+        titular_ids = cat_setup.get(cat, {}).get("titular_ids", [])
+        cat_athletes = [
+            {**a, "nome": _display_name(a)}
+            for a in athletes_db["data"] if a["id"] in titular_ids
+        ]
+        confirmed_all = [r for r in results_db["data"] if r.get("status") == "confirmed"]
+        ranking_now = compute_ranking(cat_athletes, confirmed_all, category=cat, season_id=season["id"])
+        my_now = next((r for r in ranking_now if r["athlete_id"] == athlete_id), None)
+        if my_now:
+            my_season_results = [
+                r for r in confirmed_all
+                if athlete_id in r.get("group", [])
+                and r.get("season_id") == season["id"]
+                and r.get("cat") == cat
+            ]
+            if len(my_season_results) >= 2:
+                rounds_num_map = {r["id"]: r.get("round_number", 0) for r in rounds_db["data"]}
+                latest = max(my_season_results, key=lambda r: rounds_num_map.get(r.get("round_id", ""), 0))
+                prev_confirmed = [r for r in confirmed_all if r["id"] != latest["id"]]
+                ranking_prev = compute_ranking(cat_athletes, prev_confirmed, category=cat, season_id=season["id"])
+                my_prev = next((r for r in ranking_prev if r["athlete_id"] == athlete_id), None)
+                if my_prev:
+                    rank_delta = my_prev["rank"] - my_now["rank"]  # positivo = melhorou
 
     return jsonify({
         "athlete": _safe_athlete(athlete),
@@ -1447,7 +1682,9 @@ def mesa_context():
         "my_slots": my_slot_record["slots"] if my_slot_record else [],
         "eligible_slots": _eligible_for_round(current_round),
         "pending_result": pending_result,
+        "confirmed_result": confirmed_result,
         "group_slots_status": group_slots_status,
+        "rank_delta": rank_delta,
     })
 
 
@@ -1823,7 +2060,7 @@ def athlete_public_profile(athlete_id):
         return jsonify({"error": "Atleta não encontrado"}), 404
     seasons_db = read_json("seasons.json")
     results_db = read_json("results.json")
-    profile = compute_athlete_profile(athlete, seasons_db["data"], results_db["data"])
+    profile = compute_athlete_profile(athlete, seasons_db["data"], results_db["data"], athletes_db["data"])
     return jsonify(profile)
 
 
@@ -1869,7 +2106,7 @@ def mesa_profile():
         return jsonify({"error": "Atleta não encontrado"}), 404
     seasons_db = read_json("seasons.json")
     results_db = read_json("results.json")
-    profile = compute_athlete_profile(athlete, seasons_db["data"], results_db["data"])
+    profile = compute_athlete_profile(athlete, seasons_db["data"], results_db["data"], athletes_db["data"])
     return jsonify(profile)
 
 
@@ -1946,6 +2183,726 @@ def mark_notifications_read():
             n["read"] = True
     write_json("notifications.json", db)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Ligas / Ranking Contínuo
+# ---------------------------------------------------------------------------
+
+@app.route("/api/ligas", methods=["GET"])
+def ligas_list():
+    db = read_json("ligas.json")
+    return jsonify(db["data"])
+
+
+@app.route("/api/ligas", methods=["POST"])
+@require_admin
+def ligas_create():
+    from engines.annual_engine import ALL_AWARDS
+    from datetime import timedelta as _td4
+
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    year = body.get("year")
+    close_date   = (body.get("close_date") or "").strip()
+    reopen_date  = (body.get("reopen_date") or "").strip()
+    active_awards = body.get("active_awards")
+
+    if not name:
+        return jsonify({"error": "Nome é obrigatório"}), 400
+    if not year or not isinstance(year, int) or year < 2020:
+        return jsonify({"error": "Ano inválido"}), 400
+
+    if not close_date:
+        close_date = f"{year}-12-10"
+    if not reopen_date:
+        reopen_date = f"{year + 1}-01-20"
+
+    start_date = (body.get("start_date") or "").strip()
+    default_rounds_total = int(body.get("default_rounds_total", 4))
+    default_round_duration_days = int(body.get("default_round_duration_days", 10))
+
+    if not start_date:
+        start_date = f"{year}-01-20"  # padrão: reabertura em 20/jan
+
+    if active_awards is None:
+        active_awards = list(ALL_AWARDS)
+    else:
+        invalid = [a for a in active_awards if a not in ALL_AWARDS]
+        if invalid:
+            return jsonify({"error": f"Prêmios inválidos: {invalid}"}), 400
+
+    liga = {
+        "id": str(uuid.uuid4()),
+        "name": name,
+        "year": year,
+        "start_date": start_date,
+        "close_date": close_date,
+        "reopen_date": reopen_date,
+        "status": "active",
+        "active_awards": active_awards,
+        "default_rounds_total": default_rounds_total,
+        "default_round_duration_days": default_round_duration_days,
+        "seasons": [],
+        "created_at": now_iso(),
+    }
+    db = read_json("ligas.json")
+    db["data"].append(liga)
+    write_json("ligas.json", db)
+    return jsonify(liga), 201
+
+
+@app.route("/api/ligas/<liga_id>", methods=["GET"])
+def ligas_get(liga_id):
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    return jsonify(liga)
+
+
+@app.route("/api/ligas/<liga_id>", methods=["PUT"])
+@require_admin
+def ligas_update(liga_id):
+    from engines.annual_engine import ALL_AWARDS
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    body = request.get_json(silent=True) or {}
+    for field in ("name", "start_date", "close_date", "reopen_date", "status"):
+        if field in body:
+            liga[field] = body[field]
+    if "default_rounds_total" in body:
+        liga["default_rounds_total"] = int(body["default_rounds_total"])
+    if "default_round_duration_days" in body:
+        liga["default_round_duration_days"] = int(body["default_round_duration_days"])
+    if "active_awards" in body:
+        invalid = [a for a in body["active_awards"] if a not in ALL_AWARDS]
+        if invalid:
+            return jsonify({"error": f"Prêmios inválidos: {invalid}"}), 400
+        liga["active_awards"] = body["active_awards"]
+    write_json("ligas.json", db)
+    return jsonify(liga)
+
+
+@app.route("/api/ligas/<liga_id>", methods=["DELETE"])
+@require_admin
+def ligas_delete(liga_id):
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    if liga.get("seasons"):
+        return jsonify({"error": "Remova as temporadas vinculadas antes de excluir a liga"}), 400
+    db["data"] = [l for l in db["data"] if l["id"] != liga_id]
+    write_json("ligas.json", db)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/ligas/<liga_id>/ranking")
+def ligas_ranking(liga_id):
+    from engines.annual_engine import compute_annual_ranking
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    athletes_db = read_json("athletes.json")
+    seasons_db  = read_json("seasons.json")
+    results_db  = read_json("results.json")
+    ranking = compute_annual_ranking(
+        athletes_db["data"], liga["year"], seasons_db["data"], results_db["data"]
+    )
+    return jsonify({"liga": liga, "ranking": ranking})
+
+
+@app.route("/api/ligas/<liga_id>/awards")
+def ligas_awards(liga_id):
+    from engines.annual_engine import compute_awards, compute_annual_ranking
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    athletes_db = read_json("athletes.json")
+    seasons_db  = read_json("seasons.json")
+    results_db  = read_json("results.json")
+    awards = compute_awards(
+        athletes_db["data"], liga["year"],
+        seasons_db["data"], results_db["data"],
+        liga.get("active_awards"),
+    )
+    ranking = compute_annual_ranking(
+        athletes_db["data"], liga["year"], seasons_db["data"], results_db["data"]
+    )
+    return jsonify({"liga": liga, **awards, "ranking": ranking})
+
+
+@app.route("/api/ligas/<liga_id>/awards/apply", methods=["POST"])
+@require_admin
+def ligas_awards_apply(liga_id):
+    from engines.annual_engine import compute_awards, compute_annual_ranking
+    db = read_json("ligas.json")
+    liga = next((l for l in db["data"] if l["id"] == liga_id), None)
+    if not liga:
+        return jsonify({"error": "Liga não encontrada"}), 404
+    athletes_db = read_json("athletes.json")
+    seasons_db  = read_json("seasons.json")
+    results_db  = read_json("results.json")
+    year = liga["year"]
+    awards = compute_awards(
+        athletes_db["data"], year,
+        seasons_db["data"], results_db["data"],
+        liga.get("active_awards"),
+    )
+    ranking = compute_annual_ranking(
+        athletes_db["data"], year, seasons_db["data"], results_db["data"]
+    )
+    titles_db = read_json("titles.json")
+    titles_db["data"] = [
+        t for t in titles_db["data"]
+        if not (t.get("year") == year and t.get("liga_id") == liga_id)
+    ]
+    titles_db["data"].append({
+        "year": year,
+        "liga_id": liga_id,
+        "liga_name": liga["name"],
+        "recorded_at": now_iso(),
+        "awards": awards["awards"],
+        "award_names": awards["award_names"],
+        "award_icons": awards.get("award_icons", {}),
+        "active_awards": awards["active_awards"],
+        "ranking": ranking,
+        "eligible_count": len(ranking),
+    })
+    write_json("titles.json", titles_db)
+    return jsonify({"ok": True, "year": year, "eligible_count": len(ranking)})
+
+
+# ---------------------------------------------------------------------------
+# Lesões e Pedidos de Convidado
+# ---------------------------------------------------------------------------
+
+def _recovery_date(start_date: str, duration_days: int) -> str:
+    from datetime import timedelta
+    dt = datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=duration_days)
+    return dt.strftime("%Y-%m-%d")
+
+
+def _last_place_points(season_id: str, category: str) -> int:
+    """Retorna pontos do último colocado na categoria/temporada via resultados confirmados."""
+    from engines.ranking_engine import compute_ranking
+    athletes_db = read_json("athletes.json")
+    results_db  = read_json("results.json")
+    # Identifica atletas que efetivamente jogaram nessa cat/temporada
+    played_ids = {
+        aid
+        for r in results_db["data"]
+        if r.get("season_id") == season_id
+        and r.get("cat") == category
+        and r.get("status") == "confirmed"
+        for aid in r.get("group", [])
+    }
+    cat_athletes = [a for a in athletes_db["data"] if a["id"] in played_ids]
+    ranking = compute_ranking(cat_athletes, results_db["data"], category=category, season_id=season_id)
+    if not ranking:
+        return 0
+    return ranking[-1]["points"]
+
+
+def _promote_reserva_for_injury(injury: dict, seasons_db: dict, athletes_db: dict) -> str | None:
+    """
+    Tenta promover o primeiro reserva SAUDÁVEL da categoria do atleta lesionado.
+    Retorna athlete_id do reserva promovido ou None.
+    Atualiza season.category_setup e athlete.current_category in-place.
+    """
+    season = next((s for s in seasons_db["data"] if s["id"] == injury["season_id"]), None)
+    if not season:
+        return None
+
+    cat  = injury["category"]
+    setup = season.get("category_setup", {}).get(cat, {})
+    reserva_ids = setup.get("reserva_ids", [])
+    if not reserva_ids:
+        return None
+
+    # Filtra reservas que estão atualmente lesionados (não podem ser promovidos)
+    injuries_db = read_json("injuries.json")
+    injured_ids = {
+        i["athlete_id"]
+        for i in injuries_db["data"]
+        if i.get("status") == "active" and i["athlete_id"] != injury["athlete_id"]
+    }
+    healthy_reservas = [rid for rid in reserva_ids if rid not in injured_ids]
+    if not healthy_reservas:
+        return None
+
+    reserva_id = healthy_reservas[0]
+    entry_points = _last_place_points(season["id"], cat)
+
+    # Promove reserva → titular
+    setup.setdefault("titular_ids", []).append(reserva_id)
+    setup["reserva_ids"] = reserva_ids[1:]
+
+    # Move injured → reserva
+    injured_id = injury["athlete_id"]
+    if injured_id in setup.get("titular_ids", []):
+        setup["titular_ids"].remove(injured_id)
+        setup.setdefault("reserva_ids", []).insert(0, injured_id)
+
+    # Marca pontos de entrada do reserva
+    setup.setdefault("entry_points", {})[reserva_id] = entry_points
+
+    # Atualiza athlete.current_category
+    for a in athletes_db["data"]:
+        if a["id"] == reserva_id:
+            a["current_category"] = cat
+    return reserva_id
+
+
+@app.route("/api/injuries", methods=["GET"])
+def injuries_list():
+    db = read_json("injuries.json")
+    season_id  = request.args.get("season_id")
+    athlete_id = request.args.get("athlete_id")
+    items = db["data"]
+    if season_id:
+        items = [i for i in items if i.get("season_id") == season_id]
+    if athlete_id:
+        items = [i for i in items if i.get("athlete_id") == athlete_id]
+    return jsonify(items)
+
+
+@app.route("/api/injuries", methods=["POST"])
+def injuries_create():
+    """Declara lesão — pode ser chamado pelo atleta (mesa) ou pelo admin."""
+    body = request.get_json(silent=True) or {}
+
+    athlete_id   = (body.get("athlete_id") or "").strip()
+    season_id    = (body.get("season_id")  or "").strip()
+    start_date   = (body.get("start_date") or datetime.utcnow().strftime("%Y-%m-%d")).strip()
+    duration_days = int(body.get("duration_days") or 0)
+    tipo         = body.get("tipo", "lesao")   # lesao | viagem | outro
+    notes        = (body.get("notes") or "").strip()
+
+    if not athlete_id or not season_id:
+        return jsonify({"error": "athlete_id e season_id obrigatórios"}), 400
+    if duration_days < 1:
+        return jsonify({"error": "duration_days deve ser ≥ 1"}), 400
+    if tipo not in ("lesao", "viagem", "outro"):
+        return jsonify({"error": "tipo inválido"}), 400
+
+    # Valida quem está chamando
+    is_admin  = session.get("is_admin", False)
+    mesa_id   = session.get("atleta_id")
+    if not is_admin and mesa_id != athlete_id:
+        return jsonify({"error": "Não autorizado"}), 403
+
+    athletes_db = read_json("athletes.json")
+    seasons_db  = read_json("seasons.json")
+
+    athlete = next((a for a in athletes_db["data"] if a["id"] == athlete_id), None)
+    if not athlete:
+        return jsonify({"error": "Atleta não encontrado"}), 404
+    season = next((s for s in seasons_db["data"] if s["id"] == season_id), None)
+    if not season:
+        return jsonify({"error": "Temporada não encontrada"}), 404
+
+    # Encontra categoria do atleta na temporada
+    cat = None
+    for c in CATEGORIES:
+        setup = season.get("category_setup", {}).get(c, {})
+        if athlete_id in setup.get("titular_ids", []) or athlete_id in setup.get("reserva_ids", []):
+            cat = c
+            break
+    if not cat:
+        return jsonify({"error": "Atleta não está nesta temporada"}), 400
+
+    recovery_date = _recovery_date(start_date, duration_days)
+
+    injury = {
+        "id":               str(uuid.uuid4()),
+        "athlete_id":       athlete_id,
+        "athlete_nome":     athlete.get("nome", athlete_id),
+        "season_id":        season_id,
+        "category":         cat,
+        "start_date":       start_date,
+        "duration_days":    duration_days,
+        "recovery_date":    recovery_date,
+        "declared_by":      "admin" if is_admin else athlete_id,
+        "tipo":             tipo,
+        "notes":            notes,
+        "status":           "active",
+        "vacancy_filled_by": None,
+        "created_at":       now_iso(),
+    }
+
+    # Tenta promover reserva
+    reserva_id = _promote_reserva_for_injury(injury, seasons_db, athletes_db)
+    if reserva_id:
+        injury["vacancy_filled_by"] = reserva_id
+        write_json("seasons.json", seasons_db)
+        write_json("athletes.json", athletes_db)
+
+    injuries_db = read_json("injuries.json")
+    injuries_db["data"].append(injury)
+    write_json("injuries.json", injuries_db)
+
+    return jsonify({"ok": True, "injury": injury, "reserva_promoted": reserva_id})
+
+
+@app.route("/api/injuries/<injury_id>", methods=["PUT"])
+@require_admin
+def injuries_update(injury_id):
+    db = read_json("injuries.json")
+    injury = next((i for i in db["data"] if i["id"] == injury_id), None)
+    if not injury:
+        return jsonify({"error": "Lesão não encontrada"}), 404
+    body = request.get_json(silent=True) or {}
+    for field in ("duration_days", "notes", "status", "tipo"):
+        if field in body:
+            injury[field] = body[field]
+    if "duration_days" in body:
+        injury["recovery_date"] = _recovery_date(injury["start_date"], int(body["duration_days"]))
+    write_json("injuries.json", db)
+    return jsonify({"ok": True, "injury": injury})
+
+
+@app.route("/api/injuries/<injury_id>", methods=["DELETE"])
+@require_admin
+def injuries_delete(injury_id):
+    db = read_json("injuries.json")
+    before = len(db["data"])
+    db["data"] = [i for i in db["data"] if i["id"] != injury_id]
+    if len(db["data"]) == before:
+        return jsonify({"error": "Lesão não encontrada"}), 404
+    write_json("injuries.json", db)
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Pedidos de Convidado (guest_requests)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/guest-requests", methods=["GET"])
+def guest_requests_list():
+    db = read_json("guest_requests.json")
+    round_id  = request.args.get("round_id")
+    season_id = request.args.get("season_id")
+    status    = request.args.get("status")
+    items = db["data"]
+    if round_id:
+        items = [r for r in items if r.get("round_id") == round_id]
+    if season_id:
+        items = [r for r in items if r.get("season_id") == season_id]
+    if status:
+        items = [r for r in items if r.get("status") == status]
+    return jsonify(items)
+
+
+@app.route("/api/guest-requests", methods=["POST"])
+@require_admin
+def guest_requests_create():
+    """Admin cria pedido de convidado para um grupo afetado por lesão."""
+    body = request.get_json(silent=True) or {}
+    round_id   = (body.get("round_id")   or "").strip()
+    season_id  = (body.get("season_id")  or "").strip()
+    cat        = (body.get("cat")        or "").strip().upper()
+    group_idx  = body.get("group_idx")
+    injury_id  = (body.get("injury_id")  or "").strip()
+
+    if not all([round_id, season_id, cat, group_idx is not None]):
+        return jsonify({"error": "round_id, season_id, cat, group_idx obrigatórios"}), 400
+
+    gr = {
+        "id":          str(uuid.uuid4()),
+        "round_id":    round_id,
+        "season_id":   season_id,
+        "cat":         cat,
+        "group_idx":   int(group_idx),
+        "injury_id":   injury_id or None,
+        "status":      "pending",
+        "suggestions": [],
+        "confirmed_guest": None,
+        "created_at":  now_iso(),
+    }
+    db = read_json("guest_requests.json")
+    db["data"].append(gr)
+    write_json("guest_requests.json", db)
+    return jsonify({"ok": True, "guest_request": gr}), 201
+
+
+@app.route("/api/guest-requests/<gr_id>/suggest", methods=["POST"])
+def guest_requests_suggest(gr_id):
+    """Atleta ou admin sugere um convidado para o grupo."""
+    is_admin = session.get("is_admin", False)
+    mesa_id  = session.get("atleta_id")
+    if not is_admin and not mesa_id:
+        return jsonify({"error": "Não autorizado"}), 403
+
+    db = read_json("guest_requests.json")
+    gr = next((r for r in db["data"] if r["id"] == gr_id), None)
+    if not gr:
+        return jsonify({"error": "Pedido não encontrado"}), 404
+    if gr["status"] != "pending":
+        return jsonify({"error": "Pedido já resolvido"}), 400
+
+    body = request.get_json(silent=True) or {}
+    athlete_id   = (body.get("athlete_id")   or "").strip() or None
+    nome_externo = (body.get("nome_externo") or "").strip() or None
+    telefone     = re.sub(r'\D', '', str(body.get("telefone") or "")) or None
+    if not athlete_id and not nome_externo:
+        return jsonify({"error": "Informe athlete_id ou nome_externo"}), 400
+
+    suggestion = {
+        "id":           str(uuid.uuid4()),
+        "suggested_by": "admin" if is_admin else mesa_id,
+        "athlete_id":   athlete_id,
+        "nome_externo": nome_externo,
+        "telefone":     telefone,
+        "created_at":   now_iso(),
+    }
+    gr["suggestions"].append(suggestion)
+    write_json("guest_requests.json", db)
+    return jsonify({"ok": True, "suggestion": suggestion})
+
+
+@app.route("/api/guest-requests/<gr_id>/confirm", methods=["POST"])
+@require_admin
+def guest_requests_confirm(gr_id):
+    """
+    Admin confirma convidado e gera token de cadastro descartável.
+    Aceita suggestion_id (aprova uma sugestão) ou nome_externo+telefone direto.
+    Retorna link de cadastro para enviar ao convidado.
+    """
+    db = read_json("guest_requests.json")
+    gr = next((r for r in db["data"] if r["id"] == gr_id), None)
+    if not gr:
+        return jsonify({"error": "Pedido não encontrado"}), 404
+
+    body          = request.get_json(silent=True) or {}
+    suggestion_id = (body.get("suggestion_id") or "").strip() or None
+    nome_externo  = (body.get("nome_externo")  or "").strip() or None
+    telefone      = re.sub(r'\D', '', str(body.get("telefone") or "")) or None
+    guest_type    = body.get("guest_type", "convidado")
+
+    # Resolve nome + telefone — de sugestão ou direto
+    if suggestion_id:
+        sug = next((s for s in gr.get("suggestions", []) if s["id"] == suggestion_id), None)
+        if not sug:
+            return jsonify({"error": "Sugestão não encontrada"}), 404
+        nome_externo = nome_externo or sug.get("nome_externo") or ""
+        telefone     = telefone     or sug.get("telefone")     or ""
+
+    if not nome_externo:
+        return jsonify({"error": "Nome do convidado obrigatório"}), 400
+
+    # Gera token único e guest_id descartável
+    token    = str(uuid.uuid4()).replace("-", "")[:24]
+    guest_id = f"guest_{str(uuid.uuid4())}"
+
+    gr["confirmed_guest"] = {
+        "guest_id":     guest_id,
+        "nome_display": nome_externo,
+        "telefone":     telefone,
+        "guest_type":   guest_type,
+        "is_guest":     True,
+        "token":        token,
+        "registered":   False,   # True após o convidado criar PIN
+        "pin_hash":     None,
+    }
+    gr["status"] = "filled"
+    write_json("guest_requests.json", db)
+
+    base_url = request.host_url.rstrip("/")
+    register_link = f"{base_url}/#cadastro?convidado={token}"
+
+    return jsonify({"ok": True, "guest_request": gr, "register_link": register_link, "token": token})
+
+
+@app.route("/api/guest-requests/<gr_id>/wo", methods=["POST"])
+@require_admin
+def guest_requests_wo(gr_id):
+    """Admin decide que o grupo leva W.O. (sem convidado encontrado)."""
+    db = read_json("guest_requests.json")
+    gr = next((r for r in db["data"] if r["id"] == gr_id), None)
+    if not gr:
+        return jsonify({"error": "Pedido não encontrado"}), 404
+    gr["status"] = "wo"
+    write_json("guest_requests.json", db)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/guest-token/<token>", methods=["GET"])
+def guest_token_lookup(token):
+    """Retorna dados do convidado pelo token (para pré-preencher o formulário de cadastro)."""
+    db = read_json("guest_requests.json")
+    for gr in db["data"]:
+        cg = gr.get("confirmed_guest") or {}
+        if cg.get("token") == token:
+            return jsonify({
+                "ok":        True,
+                "guest_id":  cg["guest_id"],
+                "nome":      cg["nome_display"],
+                "telefone":  cg.get("telefone", ""),
+                "cat":       gr.get("cat"),
+                "registered": cg.get("registered", False),
+            })
+    return jsonify({"error": "Token inválido ou expirado"}), 404
+
+
+@app.route("/api/guest-token/<token>/register", methods=["POST"])
+def guest_token_register(token):
+    """Convidado define seu PIN usando o token de cadastro."""
+    db = read_json("guest_requests.json")
+    gr = next(
+        (r for r in db["data"] if (r.get("confirmed_guest") or {}).get("token") == token),
+        None,
+    )
+    if not gr:
+        return jsonify({"error": "Token inválido ou expirado"}), 404
+
+    cg = gr["confirmed_guest"]
+    if cg.get("registered"):
+        return jsonify({"error": "Convidado já registrado"}), 400
+
+    body = request.get_json(silent=True) or {}
+    pin  = str(body.get("pin") or "").strip()
+    if not re.fullmatch(r'\d{4}', pin):
+        return jsonify({"error": "PIN deve ter exatamente 4 dígitos"}), 400
+
+    cg["pin_hash"]   = hash_pin(pin)
+    cg["registered"] = True
+    write_json("guest_requests.json", db)
+    return jsonify({"ok": True, "guest_id": cg["guest_id"], "nome": cg["nome_display"]})
+
+
+@app.route("/api/auth/convidado", methods=["POST"])
+def auth_convidado():
+    """Login do convidado usando telefone + PIN definidos no cadastro descartável."""
+    body     = request.get_json(silent=True) or {}
+    telefone = re.sub(r'\D', '', str(body.get("telefone") or ""))
+    pin      = str(body.get("pin") or "").strip()
+
+    if not telefone or not pin:
+        return jsonify({"error": "Telefone e PIN obrigatórios"}), 400
+
+    ph = hash_pin(pin)
+    db = read_json("guest_requests.json")
+    for gr in db["data"]:
+        cg = gr.get("confirmed_guest") or {}
+        if (cg.get("telefone") == telefone
+                and cg.get("pin_hash") == ph
+                and cg.get("registered")):
+            session["atleta_id"]  = cg["guest_id"]
+            session["is_guest"]   = True
+            session["is_admin"]   = False
+            return jsonify({
+                "ok":       True,
+                "guest_id": cg["guest_id"],
+                "nome":     cg["nome_display"],
+                "cat":      gr.get("cat"),
+                "round_id": gr.get("round_id"),
+            })
+    return jsonify({"error": "Telefone ou PIN incorretos"}), 401
+
+
+@app.route("/api/rounds/<round_id>/substitute", methods=["POST"])
+@require_admin
+def round_substitute(round_id):
+    """
+    Substitui um atleta por um convidado (ou outro atleta) no grupo de uma rodada.
+    Body: { cat, group_idx, old_athlete_id, new_athlete_id, guest_request_id? }
+    """
+    body         = request.get_json(silent=True) or {}
+    cat          = (body.get("cat") or "").upper()
+    group_idx    = body.get("group_idx")
+    old_id       = (body.get("old_athlete_id") or "").strip()
+    new_id       = (body.get("new_athlete_id")  or "").strip()
+    gr_id        = (body.get("guest_request_id") or "").strip() or None
+
+    if not all([cat, group_idx is not None, old_id, new_id]):
+        return jsonify({"error": "cat, group_idx, old_athlete_id e new_athlete_id são obrigatórios"}), 400
+
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+
+    groups = rnd.get("groups", {}).get(cat, [])
+    if group_idx >= len(groups):
+        return jsonify({"error": "Grupo não encontrado"}), 400
+
+    group_list = groups[group_idx]
+    if old_id not in group_list:
+        return jsonify({"error": f"Atleta {old_id} não está neste grupo"}), 400
+    if new_id in group_list:
+        return jsonify({"error": "Convidado já está no grupo"}), 400
+
+    idx = group_list.index(old_id)
+    group_list[idx] = new_id
+    rnd["groups"][cat][group_idx] = group_list
+    write_json("rounds.json", rounds_db)
+
+    # Marca o guest_request como 'added'
+    if gr_id:
+        gr_db = read_json("guest_requests.json")
+        gr = next((g for g in gr_db["data"] if g["id"] == gr_id), None)
+        if gr:
+            gr["status"] = "added"
+            write_json("guest_requests.json", gr_db)
+
+    return jsonify({"ok": True, "round_id": round_id, "cat": cat,
+                    "group_idx": group_idx, "replaced": old_id, "added": new_id})
+
+
+@app.route("/api/rounds/<round_id>/check-deadline", methods=["POST"])
+@require_admin
+def rounds_check_deadline(round_id):
+    """
+    Lazy W.O. check: após deadline de slots, atletas sem disponibilidade
+    registrada levam W.O. automático por omissão.
+    Retorna lista de atletas marcados.
+    """
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+
+    deadline = rnd.get("deadline_slots")
+    if not deadline:
+        return jsonify({"error": "Rodada sem deadline configurado"}), 400
+
+    now_str = datetime.utcnow().isoformat()
+    if now_str < deadline.replace("-03:00", "").replace("T", " ")[:16]:
+        return jsonify({"error": "Deadline ainda não passou"}), 400
+
+    injuries_db = read_json("injuries.json")
+    active_injuries = {
+        i["athlete_id"]
+        for i in injuries_db["data"]
+        if i.get("status") == "active"
+        and i.get("season_id") == rnd.get("season_id")
+    }
+
+    slots_db = read_json("slots.json")
+    season_id = rnd.get("season_id")
+
+    # Quais atletas submeteram slots para esta rodada
+    submitted = {
+        s["athlete_id"]
+        for s in slots_db.get("data", [])
+        if s.get("round_id") == round_id
+    }
+
+    wo_athletes = []
+    for cat, groups in (rnd.get("groups") or {}).items():
+        for gi, group in enumerate(groups):
+            for aid in group:
+                if aid in submitted or aid in active_injuries:
+                    continue
+                wo_athletes.append({"athlete_id": aid, "cat": cat, "group_idx": gi})
+
+    return jsonify({"ok": True, "wo_athletes": wo_athletes, "count": len(wo_athletes)})
 
 
 # ---------------------------------------------------------------------------

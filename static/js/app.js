@@ -388,7 +388,7 @@ function initAdminSidebar() {
 // ---------------------------------------------------------------------------
 
 async function route() {
-  const hash = location.hash.replace('#', '') || 'publico';
+  const hash = (location.hash.replace('#', '') || 'publico').split('?')[0];
   const [section, ...parts] = hash.split('/');
   const sub = parts.join('/');
 
@@ -493,6 +493,13 @@ function renderLogin() {
 // ---------------------------------------------------------------------------
 
 function renderCadastro() {
+  // Check for ?convidado=TOKEN guest registration flow
+  const hash = location.hash;
+  const qIdx = hash.indexOf('?');
+  const params = new URLSearchParams(qIdx >= 0 ? hash.slice(qIdx + 1) : '');
+  const guestToken = params.get('convidado');
+  if (guestToken) { renderCadastroConvidado(guestToken); return; }
+
   app.innerHTML = '';
   const frag = cloneTemplate('tpl-cadastro');
   app.appendChild(frag);
@@ -555,6 +562,103 @@ function renderCadastro() {
     } finally {
       btn.disabled = false;
       btn.textContent = 'Solicitar Cadastro';
+    }
+  });
+}
+
+async function renderCadastroConvidado(token) {
+  const shell = `
+    <div class="screen screen-landing">
+      <div class="landing-logo-block">
+        <div class="landing-logo-icon">🎾</div>
+        <div class="landing-logo-name">Super<span>Rank</span></div>
+        <div class="landing-tagline">Cadastro de Convidado</div>
+      </div>
+      <div class="login-card" style="max-width:420px;" id="convidado-card">
+        <p class="placeholder-text">Verificando convite…</p>
+      </div>
+      <span class="landing-version">v1.2</span>
+    </div>`;
+  app.innerHTML = shell;
+  const card = app.querySelector('#convidado-card');
+
+  let info;
+  try {
+    info = await api(`/api/guest-token/${token}`);
+  } catch (_) {
+    card.innerHTML = `
+      <p style="color:#D94040;text-align:center;font-size:14px;">
+        Link inválido ou expirado. Entre em contato com o admin.
+      </p>
+      <a href="#login" class="link-secondary" style="display:block;text-align:center;margin-top:16px;">Ir para o login</a>`;
+    return;
+  }
+
+  if (info.registered) {
+    card.innerHTML = `
+      <p style="text-align:center;font-size:14px;margin-bottom:16px;">
+        Este convite já foi utilizado.
+      </p>
+      <a href="#login" class="btn btn-primary btn-full">Fazer login</a>`;
+    return;
+  }
+
+  card.innerHTML = `
+    <p style="font-size:14px;margin-bottom:16px;color:var(--color-text-muted);">
+      Olá, <strong>${escapeHtml(info.nome)}</strong>!
+      Defina um PIN de 4 dígitos para acessar o SuperRank nesta rodada.
+    </p>
+    <form id="form-convidado" style="display:flex;flex-direction:column;gap:var(--space-md);">
+      <div class="form-group">
+        <label class="field-label">Nome exibido</label>
+        <input type="text" class="field-input" value="${escapeHtml(info.nome)}" disabled>
+      </div>
+      ${info.telefone ? `
+      <div class="form-group">
+        <label class="field-label">WhatsApp</label>
+        <input type="text" class="field-input" value="${escapeHtml(info.telefone)}" disabled>
+      </div>` : ''}
+      <div class="form-group">
+        <label class="field-label">PIN (4 dígitos)</label>
+        <input type="password" name="pin" class="field-input" placeholder="Escolha um PIN de 4 dígitos"
+               maxlength="4" inputmode="numeric" autocomplete="new-password" required autofocus>
+      </div>
+      <div class="form-group">
+        <label class="field-label">Confirmar PIN</label>
+        <input type="password" name="pin_confirm" class="field-input" placeholder="Repita o PIN"
+               maxlength="4" inputmode="numeric" autocomplete="new-password" required>
+      </div>
+      <p id="convidado-error" class="field-error hidden"></p>
+      <button type="submit" class="btn btn-primary btn-full btn-lg">Confirmar e Entrar</button>
+      <a href="#login" class="link-secondary">Já tenho cadastro — Entrar</a>
+    </form>`;
+
+  card.querySelector('#form-convidado').addEventListener('submit', async e => {
+    e.preventDefault();
+    const errorEl = card.querySelector('#convidado-error');
+    errorEl.classList.add('hidden');
+    const pin = e.target.pin.value;
+    const pinConfirm = e.target.pin_confirm.value;
+    if (pin !== pinConfirm) {
+      errorEl.textContent = 'Os PINs não coincidem.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      errorEl.textContent = 'PIN deve ter exatamente 4 dígitos numéricos.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    try {
+      await api(`/api/guest-token/${token}/register`, { method: 'POST', body: { pin } });
+      showToast('PIN definido! Faça login para entrar na rodada.');
+      location.hash = '#login';
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Confirmar e Entrar';
     }
   });
 }
@@ -630,6 +734,49 @@ async function renderPublicoRanking(container, season) {
   const renderTable = (cat) => {
     const rows = rankingData[cat] || [];
     const medals = ['gold','silver','bronze'];
+    const n = rows.length;
+    const m = n >= 8 ? 2 : 1;
+    const hasPromo = cat !== 'A' && n >= 4;
+    const hasReleg = cat !== 'D' && n >= 4;
+
+    const tableRows = rows.map(r => {
+      const inPromo = hasPromo && r.rank <= m;
+      const inReleg = hasReleg && r.rank > n - m;
+      const trClass = [inPromo ? 'pub-zone-promo' : '', inReleg ? 'pub-zone-releg' : ''].filter(Boolean).join(' ');
+
+      const delta = r.rank_delta;
+      let deltaTag = '';
+      if (delta !== null && delta !== undefined) {
+        if (delta > 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-up" title="Subiu ${delta} posição${delta !== 1 ? 'ões' : ''}">▲${delta}</span>`;
+        else if (delta < 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-down" title="Caiu ${Math.abs(delta)} posição${Math.abs(delta) !== 1 ? 'ões' : ''}">▼${Math.abs(delta)}</span>`;
+      }
+
+      const gw = r.games_won ?? '—';
+      const gl = r.games_lost ?? '—';
+      const rd = r.results_count ?? 0;
+
+      return `<tr class="${trClass}">
+        <td><span class="rank-position ${medals[r.rank-1]||''}">${r.rank}</span></td>
+        <td><a href="#publico/atleta/${r.athlete_id}" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a>${deltaTag}</td>
+        <td class="num ranking-pts">${r.points}</td>
+        <td class="num ranking-stat">${r.wins}</td>
+        <td class="num ranking-stat">${gw}/${gl}</td>
+        <td class="num ranking-stat" style="font-size:11px;color:var(--color-text-muted);">${rd}R</td>
+      </tr>`;
+    });
+
+    // Separadores de zona
+    const withSep = [];
+    rows.forEach((r, i) => {
+      withSep.push(tableRows[i]);
+      if (hasPromo && r.rank === m)
+        withSep.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-promo">▲ Zona de Promoção acima</td></tr>`);
+      if (hasReleg && r.rank === n - m)
+        withSep.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-releg">▼ Zona de Rebaixamento abaixo</td></tr>`);
+    });
+
     return `
       <table class="ranking-table">
         <thead>
@@ -637,20 +784,12 @@ async function renderPublicoRanking(container, season) {
             <th style="width:44px;">#</th>
             <th>Atleta</th>
             <th class="num">Pts</th>
-            <th class="num">W</th>
-            <th class="num">Saldo</th>
+            <th class="num">V</th>
+            <th class="num">Games</th>
+            <th class="num">R</th>
           </tr>
         </thead>
-        <tbody>
-          ${rows.map(r => `
-            <tr>
-              <td><span class="rank-position ${medals[r.rank-1]||''}">${r.rank}</span></td>
-              <td><a href="#publico/atleta/${r.athlete_id}" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a></td>
-              <td class="num ranking-pts">${r.points}</td>
-              <td class="num ranking-stat">${r.wins}</td>
-              <td class="num ranking-stat">${r.saldo >= 0 ? '+' : ''}${r.saldo}</td>
-            </tr>`).join('')}
-        </tbody>
+        <tbody>${withSep.join('')}</tbody>
       </table>`;
   };
 
@@ -791,6 +930,12 @@ async function renderAdmin(sub) {
       break;
     case 'fechamento':
       await renderAdminFechamento(content);
+      break;
+    case 'lesoes':
+      await renderAdminLesoes(content);
+      break;
+    case 'liga':
+      await renderAdminLiga(content);
       break;
     case 'anual':
       await renderAdminAnual(content);
@@ -2177,6 +2322,22 @@ async function renderMesa(sub) {
   let ctx = null;
   try { ctx = await api('/api/mesa/context'); } catch (_) {}
 
+  // Convidados: ocultar tabs irrelevantes e marcar badge
+  if (ctx?.is_guest) {
+    const nav = app.querySelector('#mesa-bottom-nav');
+    if (nav) {
+      nav.querySelectorAll('a[href="#mesa/perfil"]').forEach(el => {
+        el.style.display = 'none';
+      });
+    }
+    const nomeEl = app.querySelector('#mesa-atleta-nome');
+    if (nomeEl) nomeEl.textContent = `${ctx.athlete?.apelido || ctx.athlete?.nome || ''} (Convidado)`;
+    // Redireciona tabs sem sentido para convidado
+    if (['perfil','historico','ranking','notificacoes'].includes(sub)) {
+      location.hash = '#mesa/home'; return;
+    }
+  }
+
   switch (sub || 'home') {
     case 'home':           await renderMesaHome(content, ctx); break;
     case 'slots':          renderMesaSlots(content, ctx); break;
@@ -2202,11 +2363,85 @@ async function renderMesa(sub) {
 }
 
 // ---------------------------------------------------------------------------
+// Mesa: Home — vista de convidado
+// ---------------------------------------------------------------------------
+
+function renderMesaHomeGuest(content, ctx) {
+  const { athlete, group, round, official_slot } = ctx;
+  const nome = athlete?.apelido || athlete?.nome || '—';
+  const cat  = group?.category || '?';
+  const gi   = group != null ? (group.group_index + 1) : '?';
+
+  const slotResolved = official_slot?.status === 'resolved';
+  const slotHtml = slotResolved
+    ? `<div class="official-slot-card">
+         <p class="official-slot-label">Horário Oficial</p>
+         <p class="official-slot-time">${official_slot.slot}</p>
+         <p class="official-slot-location">📍 ${escapeHtml(group?.location || '—')}</p>
+       </div>`
+    : `<div class="pending-slot-card">
+         <p style="font-size:24px;margin-bottom:8px;">🕐</p>
+         <p style="font-weight:600;">Aguardando definição de horário</p>
+         <p style="font-size:13px;margin-top:4px;">O admin irá comunicar o slot oficial.</p>
+       </div>`;
+
+  const membersHtml = (group?.names || []).map((n, i) => {
+    const isMe = group.athlete_ids[i] === athlete.id;
+    return `<div class="group-member-row${isMe ? ' is-me' : ''}">
+      <span class="group-member-name">${escapeHtml(n)}</span>
+      ${isMe ? '<span class="badge badge-ativo">Você</span>' : ''}
+    </div>`;
+  }).join('');
+
+  const setsHtml = (group?.sets_named || []).map(s => `
+    <div class="set-row" style="padding:10px 16px;border-bottom:var(--border);">
+      <span class="set-label">Set ${s.set}</span>
+      <span class="set-team">${s.team_a.map(escapeHtml).join(' + ')}</span>
+      <span class="set-vs">vs</span>
+      <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
+    </div>`).join('');
+
+  const roundInfo = round
+    ? `Rodada ${round.round_number}${round.start_date ? ` · ${round.start_date} → ${round.end_date || '?'}` : ''}`
+    : '';
+
+  content.innerHTML = `
+    <div style="padding:16px;max-width:600px;margin:0 auto;">
+      <div style="background:rgba(255,179,0,0.12);border:1px solid rgba(255,179,0,0.35);
+                  border-radius:var(--radius-md);padding:12px 16px;margin-bottom:20px;
+                  display:flex;align-items:center;gap:10px;">
+        <span style="font-size:20px;">🎾</span>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--color-gold);">Participando como Convidado</div>
+          <div style="font-size:12px;color:var(--color-text-muted);">
+            ${escapeHtml(nome)} · ${catLabel(cat)} Grupo ${gi} · ${roundInfo}
+          </div>
+        </div>
+      </div>
+
+      ${slotHtml}
+
+      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--color-text-muted);margin:20px 0 8px;">Atletas do Grupo</p>
+      <div class="group-members-list" style="margin-bottom:20px;">${membersHtml}</div>
+
+      ${setsHtml ? `
+      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--color-text-muted);margin-bottom:8px;">Sets (Art. 7)</p>
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:20px;">${setsHtml}</div>` : ''}
+
+      <p style="font-size:12px;color:var(--color-text-muted);text-align:center;margin-top:12px;">
+        Sua participação é válida apenas nesta rodada. Os pontos não entram no ranking.
+      </p>
+    </div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Mesa: Home
 // ---------------------------------------------------------------------------
 
 async function renderMesaHome(content, ctx) {
-  if (!ctx || !ctx.season) {
+  if (!ctx || (!ctx.season && !ctx.is_guest)) {
     content.innerHTML = `
       <div class="empty-state" style="padding:40px 20px;">
         <div class="empty-state-icon">🎾</div>
@@ -2216,7 +2451,13 @@ async function renderMesaHome(content, ctx) {
     return;
   }
 
-  const { season, round, group, official_slot, my_slots, pending_result } = ctx;
+  // --- Vista simplificada para convidado ---
+  if (ctx.is_guest) {
+    renderMesaHomeGuest(content, ctx);
+    return;
+  }
+
+  const { season, round, group, official_slot, my_slots, pending_result, rank_delta } = ctx;
   const hasSlots = my_slots && my_slots.length > 0;
   const slotResolved = official_slot && official_slot.status === 'resolved';
   const athleteCat = ctx.athlete.current_category;
@@ -2248,9 +2489,17 @@ async function renderMesaHome(content, ctx) {
     function rankRow(r, idx, isMe) {
       const pos = idx + 1;
       const medal = medals[idx] || '';
+      const delta = r.rank_delta;
+      let deltaTag = '';
+      if (delta !== null && delta !== undefined) {
+        if (delta > 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-up">▲${delta}</span>`;
+        else if (delta < 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-down">▼${Math.abs(delta)}</span>`;
+      }
       return `<div class="mini-rank-row${isMe ? ' mini-rank-me' : ''}">
         <span class="mini-rank-pos">${medal || pos + '°'}</span>
-        <span class="mini-rank-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mini-rank-you">você</span>' : ''}</span>
+        <span class="mini-rank-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mini-rank-you">você</span>' : ''}${deltaTag}</span>
         <span class="mini-rank-pts">${r.points} pts</span>
       </div>`;
     }
@@ -2282,28 +2531,53 @@ async function renderMesaHome(content, ctx) {
   const catTotal = catRanking.length;
   const rank = myRank?.rank;
 
-  // Promo/releg bars (side by side in one row)
+  // Promo/releg: textos concretos (pts de distância)
   let promoRelegHtml = '';
   if (myRank && catTotal > 0) {
+    const m = catTotal >= 8 ? 2 : 1;
     const showPromo = athleteCat !== 'A';
     const showReleg = athleteCat !== 'D';
-    const promoPct = showPromo ? Math.max(0, Math.round(100 * (1 - (rank - 1) / catTotal))) : 0;
-    const relegPct = showReleg ? Math.max(0, Math.round(100 * (rank - 1) / catTotal)) : 0;
-    const promoCol = showPromo ? `
-      <div style="flex:1;">
-        <div class="promo-releg-label up">Promoção</div>
-        <div class="promo-releg-bar-bg"><div class="promo-releg-bar-fill up" style="width:${promoPct}%;"></div></div>
-        <div class="promo-releg-pct up">${promoPct}%</div>
-      </div>` : '';
-    const relegCol = showReleg ? `
-      <div style="flex:1;">
-        <div class="promo-releg-label down">Rebaixamento</div>
-        <div class="promo-releg-bar-bg"><div class="promo-releg-bar-fill down" style="width:${relegPct}%;"></div></div>
-        <div class="promo-releg-pct down">${relegPct}%</div>
-      </div>` : '';
-    if (showPromo || showReleg) {
-      promoRelegHtml = `<div class="promo-releg-row" style="margin-bottom:var(--space-md);">${promoCol}${relegCol}</div>`;
+    let promoText = '', relegText = '';
+
+    if (showPromo) {
+      if (rank <= m) {
+        promoText = `<span style="color:#22C55E;font-weight:700;">Você está na zona de promoção!</span>`;
+      } else {
+        const gap = (catRanking[m - 1]?.points ?? 0) - myRank.points;
+        promoText = gap > 0
+          ? `<span style="color:#22C55E;">${gap} pt${gap !== 1 ? 's' : ''} atrás do ${m}° (promove)</span>`
+          : `<span style="color:#22C55E;font-weight:700;">Empatado na zona de promoção!</span>`;
+      }
     }
+    if (showReleg) {
+      const relegCutIdx = catTotal - m; // 0-based index of first relegated
+      const relegEntry = catRanking[relegCutIdx];
+      if (rank > catTotal - m) {
+        relegText = `<span style="color:#EF4444;font-weight:700;">Você está na zona de rebaixamento!</span>`;
+      } else if (relegEntry) {
+        const gap = myRank.points - relegEntry.points;
+        relegText = gap > 0
+          ? `<span style="color:#EF4444;">${gap} pt${gap !== 1 ? 's' : ''} acima da zona de rebaixamento</span>`
+          : `<span style="color:#EF4444;font-weight:700;">Empatado com a zona de rebaixamento!</span>`;
+      }
+    }
+    if (promoText || relegText) {
+      promoRelegHtml = `<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:var(--space-md);font-size:12px;">
+        ${promoText ? `<div>⬆ ${promoText}</div>` : ''}
+        ${relegText ? `<div>⬇ ${relegText}</div>` : ''}
+      </div>`;
+    }
+  }
+
+  // Badge de evolução de posição (separado do número grande)
+  let deltaBadge = '';
+  if (rank_delta !== null && rank_delta !== undefined) {
+    if (rank_delta > 0)
+      deltaBadge = `<span class="rank-delta-badge rank-delta-up">▲ ${rank_delta} pos.</span>`;
+    else if (rank_delta < 0)
+      deltaBadge = `<span class="rank-delta-badge rank-delta-down">▼ ${Math.abs(rank_delta)} pos.</span>`;
+    else
+      deltaBadge = `<span class="rank-delta-badge rank-delta-same">= mesma pos.</span>`;
   }
 
   // Last result from history
@@ -2338,19 +2612,20 @@ async function renderMesaHome(content, ctx) {
           <div class="mesa-hero-pts-label">pontos</div>
         </div>
       </div>
+      ${deltaBadge ? `<div style="margin-bottom:10px;">${deltaBadge}</div>` : ''}
       ${promoRelegHtml}
       <div class="mesa-stats-grid">
         <div class="mesa-stat-cell">
           <div class="mesa-stat-value">${myRank.wins}</div>
-          <div class="mesa-stat-label">Vitórias</div>
+          <div class="mesa-stat-label">Sets Ganhos</div>
         </div>
         <div class="mesa-stat-cell">
-          <div class="mesa-stat-value">${myRank.saldo >= 0 ? '+' : ''}${myRank.saldo}</div>
-          <div class="mesa-stat-label">Saldo Sets</div>
+          <div class="mesa-stat-value">${myRank.games_won ?? '—'}/${myRank.games_lost ?? '—'}</div>
+          <div class="mesa-stat-label">Games G/P</div>
         </div>
         <div class="mesa-stat-cell">
-          <div class="mesa-stat-value">${catTotal}</div>
-          <div class="mesa-stat-label">Na categoria</div>
+          <div class="mesa-stat-value">${myRank.results_count ?? 0}/${round ? round.rounds_total : '—'}</div>
+          <div class="mesa-stat-label">Rodadas</div>
         </div>
       </div>
     </div>` : `
@@ -2456,22 +2731,63 @@ async function renderMesaRanking(content, ctx) {
   function renderTable(cat) {
     const rows = allRanking[cat] || [];
     if (!rows.length) return `<p style="color:var(--color-text-muted);padding:20px 16px;">Nenhum atleta nesta categoria ainda.</p>`;
+    const n = rows.length;
+    const m = n >= 8 ? 2 : 1;
+    const hasPromo = cat !== 'A' && n >= 4;
+    const hasReleg = cat !== 'D' && n >= 4;
+
+    const tableRows = rows.map((r, i) => {
+      const isMe = r.athlete_id === myId;
+      const pos  = i + 1;
+      const medal = medals[i] || '';
+      const inPromo = hasPromo && pos <= m;
+      const inReleg = hasReleg && pos > n - m;
+      let trClass = isMe ? 'mesa-ranking-me' : '';
+      if (inPromo) trClass += ' zone-promo';
+      if (inReleg) trClass += ' zone-releg';
+      const gw = r.games_won ?? '—';
+      const gl = r.games_lost ?? '—';
+      const rd = r.results_count ?? 0;
+      const delta = r.rank_delta;
+      let deltaTag = '';
+      if (delta !== null && delta !== undefined) {
+        if (delta > 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-up" title="Subiu ${delta} posição${delta !== 1 ? 'ões' : ''}">▲${delta}</span>`;
+        else if (delta < 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-down" title="Caiu ${Math.abs(delta)} posição${Math.abs(delta) !== 1 ? 'ões' : ''}">▼${Math.abs(delta)}</span>`;
+      }
+      return `<tr class="${trClass.trim()}">
+        <td class="mesa-ranking-pos">${medal || (pos + '°')}</td>
+        <td class="mesa-ranking-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mesa-ranking-you-tag">você</span>' : ''}${deltaTag}</td>
+        <td class="mesa-ranking-pts">${r.points}</td>
+        <td class="mesa-ranking-stat">${r.wins}</td>
+        <td class="mesa-ranking-stat">${gw}/${gl}</td>
+        <td class="mesa-ranking-stat" style="font-size:11px;color:var(--color-text-muted);">${rd}R</td>
+      </tr>`;
+    });
+
+    // Separator rows at zone boundaries
+    const withSeparators = [];
+    rows.forEach((r, i) => {
+      const pos = i + 1;
+      // After last promo spot
+      if (hasPromo && pos === m) {
+        withSeparators.push(tableRows[i]);
+        withSeparators.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-promo">▲ Zona de Promoção acima</td></tr>`);
+      // Before first releg spot
+      } else if (hasReleg && pos === n - m) {
+        withSeparators.push(tableRows[i]);
+        withSeparators.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-releg">▼ Zona de Rebaixamento abaixo</td></tr>`);
+      } else {
+        withSeparators.push(tableRows[i]);
+      }
+    });
+
     return `<table class="mesa-ranking-table">
       <thead><tr>
-        <th>#</th><th>Atleta</th><th>Pts</th><th>V</th><th>Saldo</th>
+        <th>#</th><th>Atleta</th><th>Pts</th><th>V</th><th>Games</th><th>R</th>
       </tr></thead>
-      <tbody>${rows.map((r, i) => {
-        const isMe = r.athlete_id === myId;
-        const pos  = i + 1;
-        const medal = medals[i] || '';
-        return `<tr class="${isMe ? 'mesa-ranking-me' : ''}">
-          <td class="mesa-ranking-pos">${medal || (pos + '°')}</td>
-          <td class="mesa-ranking-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mesa-ranking-you-tag">você</span>' : ''}</td>
-          <td class="mesa-ranking-pts">${r.points}</td>
-          <td class="mesa-ranking-stat">${r.wins}</td>
-          <td class="mesa-ranking-stat">${r.saldo >= 0 ? '+' : ''}${r.saldo}</td>
-        </tr>`;
-      }).join('')}</tbody>
+      <tbody>${withSeparators.join('')}</tbody>
     </table>`;
   }
 
@@ -2872,7 +3188,7 @@ async function renderMesaGrupo(content, ctx) {
     return;
   }
 
-  const { athlete, group, official_slot, round } = ctx;
+  const { athlete, group, official_slot, round, confirmed_result } = ctx;
   const slotsStatus = ctx.group_slots_status || [];
   const slotResolved = official_slot && official_slot.status === 'resolved';
   const slotCard = slotResolved
@@ -2922,18 +3238,34 @@ async function renderMesaGrupo(content, ctx) {
       <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
          color:var(--color-text-muted);margin-bottom:8px;">Sets (Art. 7)</p>
       <div class="card" style="padding:0;overflow:hidden;">
-        ${(group.sets_named || []).map(s => `
+        ${(group.sets_named || []).map(s => {
+          // Placar real do resultado confirmado
+          let scoreHtml = '';
+          if (confirmed_result && confirmed_result.sets) {
+            const setDef = confirmed_result.sets.find(sd => sd.set === s.set);
+            if (setDef) {
+              const won = setDef.score_a > setDef.score_b;
+              scoreHtml = `<span class="set-score-result" style="font-size:13px;font-weight:700;color:var(--color-primary);margin-left:auto;">
+                ${setDef.score_a}<span style="color:var(--color-text-muted);">–</span>${setDef.score_b}${setDef.is_super_tiebreak ? ' <span style="font-size:10px;">STB</span>' : ''}
+              </span>`;
+            }
+          }
+          return `
           <div class="set-row" style="padding:10px 16px;border-bottom:var(--border);">
             <span class="set-label">Set ${s.set}</span>
             <span class="set-team">${s.team_a.map(escapeHtml).join(' + ')}</span>
             <span class="set-vs">vs</span>
             <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
-          </div>`).join('')}
+            ${scoreHtml}
+          </div>`;
+        }).join('')}
       </div>
 
       <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
          color:var(--color-text-muted);margin:20px 0 8px;">Mensagens Rápidas</p>
       <div class="quick-msg-grid" id="quick-msg-btns"></div>
+
+      <div id="guest-request-section"></div>
     </div>`;
 
   // Quick message buttons (populated after innerHTML is set since we need admin phone)
@@ -3002,6 +3334,73 @@ async function renderMesaGrupo(content, ctx) {
     ).join('');
     msgGrid.querySelectorAll('.quick-msg-btn').forEach(btn => {
       btn.addEventListener('click', () => btns[parseInt(btn.dataset.idx)].action());
+    });
+  }
+
+  // Pending guest request for this group?
+  const grSection = content.querySelector('#guest-request-section');
+  if (grSection && ctx.round && group.category !== undefined) {
+    try {
+      const grs = await api(`/api/guest-requests?round_id=${ctx.round.id}&status=pending`);
+      const myGr = grs.find(g => g.cat === group.category && g.group_idx === group.group_index);
+      if (myGr) {
+        _renderMesaGuestRequest(grSection, myGr, athlete.id);
+      }
+    } catch (_) { /* not critical */ }
+  }
+}
+
+function _renderMesaGuestRequest(container, gr, myAthleteId) {
+  const mySuggestion = gr.suggestions?.find(s => s.suggested_by === myAthleteId);
+
+  const suggestionsHtml = gr.suggestions?.length
+    ? `<div style="margin-bottom:10px;">
+        <p style="font-size:11px;color:var(--color-text-muted);margin-bottom:6px;">Sugestões enviadas:</p>
+        ${gr.suggestions.map(s => `
+          <div class="suggestion-row">
+            <span style="font-weight:600;">${escapeHtml(s.nome_externo || s.athlete_id || '—')}</span>
+            ${s.telefone ? `<span style="color:var(--color-text-muted);font-size:12px;">${escapeHtml(s.telefone)}</span>` : ''}
+            <span style="font-size:11px;color:var(--color-text-muted);margin-left:auto;">
+              ${s.suggested_by === myAthleteId ? 'Você' : 'Colega'}
+            </span>
+          </div>`).join('')}
+      </div>`
+    : '';
+
+  container.innerHTML = `
+    <div class="guest-request-banner">
+      <div class="guest-request-banner-title">🏥 Convidado Necessário</div>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:10px;">
+        Um atleta do seu grupo está afastado. O admin pode confirmar um convidado para a rodada.
+        ${mySuggestion ? 'Você já enviou uma sugestão.' : 'Sugira um convidado abaixo.'}
+      </p>
+      ${suggestionsHtml}
+      ${mySuggestion ? '' : `
+        <div class="guest-suggest-form" id="suggest-form-${gr.id}">
+          <input id="suggest-nome-${gr.id}" class="form-input" placeholder="Nome do convidado" maxlength="80">
+          <input id="suggest-tel-${gr.id}" class="form-input" placeholder="WhatsApp (com DDD)" inputmode="numeric" maxlength="20">
+          <button class="btn btn-sm btn-primary" id="btn-suggest-${gr.id}">Sugerir Convidado</button>
+          <p id="suggest-msg-${gr.id}" class="hidden" style="font-size:12px;color:#D94040;"></p>
+        </div>`}
+    </div>`;
+
+  if (!mySuggestion) {
+    container.querySelector(`#btn-suggest-${gr.id}`).addEventListener('click', async () => {
+      const nome = container.querySelector(`#suggest-nome-${gr.id}`).value.trim();
+      const tel  = container.querySelector(`#suggest-tel-${gr.id}`).value.replace(/\D/g, '');
+      const msg  = container.querySelector(`#suggest-msg-${gr.id}`);
+      if (!nome) { msg.textContent = 'Informe o nome do convidado.'; msg.classList.remove('hidden'); return; }
+      if (!tel)  { msg.textContent = 'Informe o WhatsApp.'; msg.classList.remove('hidden'); return; }
+      try {
+        await api(`/api/guest-requests/${gr.id}/suggest`, {
+          method: 'POST',
+          body: { nome_externo: nome, telefone: tel },
+        });
+        showToast('Sugestão enviada! O admin irá confirmar.');
+        _renderMesaGuestRequest(container, { ...gr, suggestions: [...(gr.suggestions || []), { suggested_by: myAthleteId, nome_externo: nome, telefone: tel }] }, myAthleteId);
+      } catch (err) {
+        msg.textContent = err.message; msg.classList.remove('hidden');
+      }
     });
   }
 }
@@ -3367,16 +3766,52 @@ async function renderAdminResultados(content) {
         <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
       </div>
     </div>
+    <div id="resultados-cat-tabs" class="cat-tabs" style="padding:0 var(--space-md) var(--space-sm);">
+      <button class="cat-tab active" data-filter="all">Todas</button>
+    </div>
     <div id="resultados-body">
       <p class="placeholder-text">Carregando…</p>
     </div>`;
 
   const body = content.querySelector('#resultados-body');
+  const tabsBar = content.querySelector('#resultados-cat-tabs');
 
   if (!rounds.length) {
     body.innerHTML = `<div class="alert alert-info">Nenhuma rodada com sorteio realizado.</div>`;
     return;
   }
+
+  // Coleta categorias presentes em todos os rounds
+  const presentCats = [...new Set(
+    rounds.flatMap(rnd => Object.keys(rnd.groups || {}))
+  )].sort();
+  presentCats.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'cat-tab';
+    btn.dataset.filter = cat;
+    btn.textContent = `Cat ${cat}`;
+    tabsBar.appendChild(btn);
+  });
+
+  let activeCatFilter = 'all';
+
+  function applyFilter(cat) {
+    activeCatFilter = cat;
+    tabsBar.querySelectorAll('.cat-tab').forEach(t => t.classList.toggle('active', t.dataset.filter === cat));
+    body.querySelectorAll('.group-card[data-cat]').forEach(card => {
+      card.style.display = (cat === 'all' || card.dataset.cat === cat) ? '' : 'none';
+    });
+    // Oculta cards de rodada que ficaram sem grupos visíveis
+    body.querySelectorAll('.card[data-round-card]').forEach(card => {
+      const hasVisible = [...card.querySelectorAll('.group-card[data-cat]')].some(g => g.style.display !== 'none');
+      card.style.display = hasVisible ? '' : 'none';
+    });
+  }
+
+  tabsBar.addEventListener('click', e => {
+    const btn = e.target.closest('.cat-tab');
+    if (btn) applyFilter(btn.dataset.filter);
+  });
 
   // Renderiza painel por rodada
   const renderRounds = async () => {
@@ -3388,11 +3823,22 @@ async function renderAdminResultados(content) {
         roundResults.map(r => [`${r.cat}-${r.group_idx}`, r])
       );
 
+      const today = new Date().toISOString().slice(0, 10);
+      const rndEnd = rnd.end_date || rnd.target_date;
+      const isOverdue = rndEnd && rndEnd < today && rnd.status !== 'closed';
+      const periodHtml = rnd.start_date
+        ? `<span class="round-period">${rnd.start_date} → ${rnd.end_date || '?'}</span>`
+        : '';
+      const overdueBadge = isOverdue
+        ? `<span class="badge badge-overdue" style="margin-left:8px;">Vencida</span>`
+        : '';
+
       html += `
-        <div class="card" style="margin-bottom:20px;">
-          <div class="cat-tab-bar" style="padding:var(--space-sm) var(--space-md);border-bottom:var(--border);">
+        <div class="card" data-round-card style="margin-bottom:20px;">
+          <div class="cat-tab-bar" style="padding:var(--space-sm) var(--space-md);border-bottom:var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <strong>Rodada ${rnd.round_number}</strong>
-            ${rnd.target_date ? `<span style="color:var(--color-text-muted);font-size:13px;margin-left:8px;">${rnd.target_date}</span>` : ''}
+            ${periodHtml}
+            ${overdueBadge}
           </div>`;
 
       for (const [cat, groups] of Object.entries(rnd.groups || {})) {
@@ -3408,7 +3854,7 @@ async function renderAdminResultados(content) {
             : 'badge-inativo';
 
           html += `
-            <div class="group-card" style="margin:var(--space-sm) var(--space-md);border:var(--border);border-radius:var(--radius-md);overflow:hidden;">
+            <div class="group-card" data-cat="${cat}" style="margin:var(--space-sm) var(--space-md);border:var(--border);border-radius:var(--radius-md);overflow:hidden;">
               <div class="group-card-header" style="display:flex;align-items:center;gap:8px;padding:8px var(--space-md);background:var(--color-bg);">
                 ${catLabel(cat)}
                 <span style="font-size:13px;font-weight:600;">Grupo ${gi + 1}</span>
@@ -3439,15 +3885,36 @@ async function renderAdminResultados(content) {
       html += `</div>`;
     }
     body.innerHTML = html;
+    applyFilter(activeCatFilter);
     attachResultadosListeners(body, athletesById, renderRounds);
   };
 
   await renderRounds();
 }
 
+function _renderSetScorelines(sets, athletesById) {
+  if (!sets || !sets.length) return '';
+  const rows = sets.map(s => {
+    const nameA = (s.team_a || []).map(id => escapeHtml(athletesById[id]?.nome?.split(' ')[0] || id)).join(' / ');
+    const nameB = (s.team_b || []).map(id => escapeHtml(athletesById[id]?.nome?.split(' ')[0] || id)).join(' / ');
+    const winA = s.score_a > s.score_b;
+    const winB = s.score_b > s.score_a;
+    return `<div class="set-scoreline">
+      <span class="set-team ${winA ? 'set-winner' : ''}">${nameA}</span>
+      <span class="set-score">${s.score_a}<span class="set-sep">×</span>${s.score_b}</span>
+      <span class="set-team set-team-right ${winB ? 'set-winner' : ''}">${nameB}</span>
+    </div>`;
+  }).join('');
+  return `<div class="set-scorelines">${rows}</div>`;
+}
+
 function renderResultScores(result, group, athletesById) {
   if (!result.scores) return '';
-  const rows = group.map(aid => {
+  const scoreLines = _renderSetScorelines(result.sets || [], athletesById);
+  const sorted = [...group].sort((a, b) =>
+    (result.scores[b]?.total ?? 0) - (result.scores[a]?.total ?? 0)
+  );
+  const rows = sorted.map((aid, i) => {
     const sc = result.scores[aid];
     if (!sc) return '';
     const nome = athletesById[aid]?.nome || aid;
@@ -3456,12 +3923,17 @@ function renderResultScores(result, group, athletesById) {
       return `<span class="result-set-badge ${cls}">${pts}</span>`;
     }).join('');
     return `<tr>
+      <td style="padding:4px 8px;font-size:12px;color:var(--color-text-muted);">${i + 1}º</td>
       <td style="padding:4px 8px;font-size:13px;">${escapeHtml(nome)}</td>
       <td style="padding:4px 8px;"><div class="result-set-scores">${badges}</div></td>
       <td style="padding:4px 8px;font-weight:700;color:var(--color-primary);">${sc.total ?? 0}pts</td>
     </tr>`;
   }).join('');
-  return `<table style="width:100%;margin-bottom:8px;"><tbody>${rows}</tbody></table>`;
+  return `
+    ${scoreLines}
+    <table style="width:100%;margin-bottom:8px;margin-top:${scoreLines ? '10px' : '0'};">
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 
 function attachResultadosListeners(body, athletesById, refresh) {
@@ -3753,152 +4225,1029 @@ async function renderAdminFechamento(content) {
 
 
 // ---------------------------------------------------------------------------
-// Sprint 8: Admin — Anual (Art. 21/22/23)
+// Admin — Ligas (Ranking Contínuo)
 // ---------------------------------------------------------------------------
 
-async function renderAdminAnual(content) {
-  content.innerHTML = `<p class="placeholder-text">Carregando dados anuais…</p>`;
+async function renderAdminLiga(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando ligas…</p>`;
+
+  const AWARD_META = {
+    rei_do_play:        { icon: '👑', label: 'Rei do Play' },
+    atleta_revelacao:   { icon: '🌟', label: 'Atleta Revelação' },
+    pato_do_play:       { icon: '🦆', label: 'Pato do Play' },
+    melhor_performance: { icon: '⚡', label: 'Melhor Performance' },
+    maior_virada:       { icon: '📈', label: 'Maior Virada' },
+  };
+  const ALL_AWARD_KEYS = Object.keys(AWARD_META);
+
+  let ligas = [], allSeasons = [];
+  try {
+    [ligas, allSeasons] = await Promise.all([
+      api('/api/ligas'),
+      api('/api/seasons'),
+    ]);
+  } catch (_) {}
 
   const year = new Date().getFullYear();
-  let titles, athletes, seasons;
+
+  // --- estimate seasons count from liga dates + duration ---
+  function estimateSeasons(startDate, closeDate, roundsTotal, daysPerRound) {
+    if (!startDate || !closeDate || !roundsTotal || !daysPerRound) return null;
+    const ms = new Date(closeDate) - new Date(startDate);
+    if (ms <= 0) return 0;
+    const days = ms / 86400000;
+    const seasonDays = roundsTotal * daysPerRound;
+    return Math.floor(days / seasonDays);
+  }
+
+  // --- Liga creation / edit form ---
+  function buildLigaForm(liga = null) {
+    const isEdit = !!liga;
+    const y = liga?.year || year;
+    const activeAwards = liga?.active_awards || ALL_AWARD_KEYS;
+    const rt  = liga?.default_rounds_total || 4;
+    const rpd = liga?.default_round_duration_days || 10;
+    const sd  = liga?.start_date  || `${y}-01-20`;
+    const cd  = liga?.close_date  || `${y}-12-10`;
+    const est = estimateSeasons(sd, cd, rt, rpd);
+
+    const awardsHtml = ALL_AWARD_KEYS.map(k => `
+      <label class="liga-award-toggle ${activeAwards.includes(k) ? 'active' : ''}">
+        <input type="checkbox" value="${k}" ${activeAwards.includes(k) ? 'checked' : ''}>
+        <span class="liga-award-icon">${AWARD_META[k].icon}</span>
+        <span class="liga-award-label">${AWARD_META[k].label}</span>
+      </label>`).join('');
+
+    return `
+      <div class="card liga-form-card" id="liga-form">
+        <p class="form-section-label">${isEdit ? `Editar: ${escapeHtml(liga.name)}` : 'Nova Liga / Ranking Contínuo'}</p>
+
+        <label class="form-label">Nome</label>
+        <input id="lf-name" class="form-input" value="${escapeHtml(liga?.name || `Ranking Contínuo ${y}`)}" placeholder="Ex: Ranking Contínuo 2026">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+          <div>
+            <label class="form-label">Ano</label>
+            <input id="lf-year" class="form-input" type="number" min="2020" max="2099" value="${y}" ${isEdit ? 'disabled' : ''}>
+          </div>
+          <div>
+            <label class="form-label">Status</label>
+            <select id="lf-status" class="form-input">
+              ${['active','closed','pending'].map(s =>
+                `<option value="${s}" ${(liga?.status||'active')===s?'selected':''}>${{active:'Ativa',closed:'Encerrada',pending:'Pendente'}[s]}</option>`
+              ).join('')}
+            </select>
+          </div>
+        </div>
+
+        <p class="form-section-label" style="margin-top:16px;">Período da liga</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Início</label>
+            <input id="lf-start" class="form-input" type="date" value="${sd}">
+          </div>
+          <div>
+            <label class="form-label">Encerramento</label>
+            <input id="lf-close" class="form-input" type="date" value="${cd}">
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="form-label">Reabertura próximo ano</label>
+          <input id="lf-reopen" class="form-input" type="date" value="${liga?.reopen_date || `${y+1}-01-20`}" style="max-width:200px;">
+        </div>
+
+        <p class="form-section-label" style="margin-top:16px;">Duração padrão das temporadas</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end;">
+          <div>
+            <label class="form-label">Rodadas por temporada</label>
+            <select id="lf-rounds" class="form-input">
+              ${[2,3,4,5].map(n => `<option value="${n}" ${rt===n?'selected':''}>${n} rodadas</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Dias por rodada</label>
+            <input id="lf-rpd" class="form-input" type="number" min="1" max="60" value="${rpd}">
+          </div>
+        </div>
+        <div id="lf-estimate" class="liga-estimate-badge" style="margin-top:10px;">
+          ${est !== null ? `≈ <strong>${est}</strong> temporadas no período` : ''}
+        </div>
+
+        <label class="form-label" style="margin-top:16px;">Prêmios ativos</label>
+        <div class="liga-awards-grid">${awardsHtml}</div>
+
+        <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="btn-lf-save">${isEdit ? 'Salvar alterações' : 'Criar Liga'}</button>
+          <button class="btn btn-ghost" id="btn-lf-cancel">Cancelar</button>
+          <span id="lf-msg" style="font-size:13px;align-self:center;"></span>
+        </div>
+      </div>`;
+  }
+
+  function setupLigaForm(liga) {
+    const wrap = content.querySelector('#liga-form-wrap');
+
+    // Award toggles
+    wrap.querySelectorAll('.liga-award-toggle input').forEach(cb =>
+      cb.addEventListener('change', () => cb.closest('.liga-award-toggle').classList.toggle('active', cb.checked))
+    );
+
+    // Live estimate
+    function refreshEstimate() {
+      const sd  = wrap.querySelector('#lf-start')?.value;
+      const cd  = wrap.querySelector('#lf-close')?.value;
+      const rt  = parseInt(wrap.querySelector('#lf-rounds')?.value || 4);
+      const rpd = parseInt(wrap.querySelector('#lf-rpd')?.value || 10);
+      const est = estimateSeasons(sd, cd, rt, rpd);
+      const el  = wrap.querySelector('#lf-estimate');
+      if (el) el.innerHTML = est !== null ? `≈ <strong>${est}</strong> temporadas no período (${rt} rod × ${rpd} dias = ${rt*rpd} dias/temporada)` : '';
+    }
+    ['#lf-start','#lf-close','#lf-rounds','#lf-rpd'].forEach(sel =>
+      wrap.querySelector(sel)?.addEventListener('input', refreshEstimate)
+    );
+
+    wrap.querySelector('#btn-lf-cancel').addEventListener('click', () => { wrap.innerHTML = ''; });
+
+    wrap.querySelector('#btn-lf-save').addEventListener('click', async () => {
+      const btn = wrap.querySelector('#btn-lf-save');
+      const msg = wrap.querySelector('#lf-msg');
+      const active_awards = [...wrap.querySelectorAll('.liga-award-toggle input:checked')].map(cb => cb.value);
+      const body = {
+        name:    wrap.querySelector('#lf-name').value.trim(),
+        start_date: wrap.querySelector('#lf-start').value,
+        close_date: wrap.querySelector('#lf-close').value,
+        reopen_date: wrap.querySelector('#lf-reopen').value,
+        status:  wrap.querySelector('#lf-status').value,
+        default_rounds_total: parseInt(wrap.querySelector('#lf-rounds').value),
+        default_round_duration_days: parseInt(wrap.querySelector('#lf-rpd').value),
+        active_awards,
+      };
+      if (!liga) body.year = parseInt(wrap.querySelector('#lf-year').value);
+      btn.disabled = true; btn.textContent = 'Salvando…';
+      try {
+        let saved;
+        if (liga) {
+          saved = await api(`/api/ligas/${liga.id}`, { method: 'PUT', body });
+          const idx = ligas.findIndex(l => l.id === liga.id);
+          if (idx !== -1) ligas[idx] = saved;
+        } else {
+          saved = await api('/api/ligas', { method: 'POST', body });
+          ligas.push(saved);
+        }
+        wrap.innerHTML = '';
+        render();
+        showToast(liga ? 'Liga atualizada.' : 'Liga criada!');
+      } catch (err) {
+        msg.textContent = `Erro: ${err.message}`; msg.style.color = '#D94040';
+        btn.disabled = false; btn.textContent = liga ? 'Salvar alterações' : 'Criar Liga';
+      }
+    });
+  }
+
+  // --- Season sub-form inside a liga card ---
+  function buildSeasonForm(liga, nextNum, suggestedStart) {
+    const name = `Temporada ${nextNum}`;
+    const rt  = liga.default_rounds_total || 4;
+    const rpd = liga.default_round_duration_days || 10;
+    const sd  = suggestedStart || liga.start_date || '';
+    const autoEnd = sd ? (() => {
+      const d = new Date(sd); d.setDate(d.getDate() + rt * rpd - 1);
+      return d.toISOString().slice(0,10);
+    })() : '';
+
+    return `
+      <div class="liga-season-form" id="sf-${liga.id}">
+        <p class="form-section-label">Nova Temporada — ${escapeHtml(liga.name)}</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label class="form-label">Nome</label>
+            <input id="sf-name-${liga.id}" class="form-input" value="${escapeHtml(name)}">
+          </div>
+          <div>
+            <label class="form-label">Local</label>
+            <input id="sf-loc-${liga.id}" class="form-input" value="Clube do Play">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;">
+          <div>
+            <label class="form-label">Início</label>
+            <input id="sf-start-${liga.id}" class="form-input" type="date" value="${sd}">
+          </div>
+          <div>
+            <label class="form-label">Rodadas</label>
+            <select id="sf-rounds-${liga.id}" class="form-input">
+              ${[2,3,4,5].map(n => `<option value="${n}" ${rt===n?'selected':''}>${n}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Dias/rodada</label>
+            <input id="sf-rpd-${liga.id}" class="form-input" type="number" min="1" max="60" value="${rpd}">
+          </div>
+        </div>
+        <div class="liga-estimate-badge" id="sf-end-preview-${liga.id}" style="margin-top:8px;">
+          ${autoEnd ? `Término estimado: <strong>${autoEnd}</strong>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="btn btn-primary btn-sm" id="sf-save-${liga.id}">Criar Temporada</button>
+          <button class="btn btn-ghost btn-sm" id="sf-cancel-${liga.id}">Cancelar</button>
+          <span id="sf-msg-${liga.id}" style="font-size:12px;align-self:center;"></span>
+        </div>
+      </div>`;
+  }
+
+  function attachSeasonForm(liga, container) {
+    const id = liga.id;
+    const sfStart  = container.querySelector(`#sf-start-${id}`);
+    const sfRounds = container.querySelector(`#sf-rounds-${id}`);
+    const sfRpd    = container.querySelector(`#sf-rpd-${id}`);
+    const sfPreview= container.querySelector(`#sf-end-preview-${id}`);
+
+    function updateEndPreview() {
+      const sd  = sfStart.value;
+      const rt  = parseInt(sfRounds.value || 4);
+      const rpd = parseInt(sfRpd.value || 10);
+      if (!sd) { sfPreview.innerHTML = ''; return; }
+      const d = new Date(sd); d.setDate(d.getDate() + rt * rpd - 1);
+      sfPreview.innerHTML = `Término estimado: <strong>${d.toISOString().slice(0,10)}</strong>`;
+    }
+    [sfStart, sfRounds, sfRpd].forEach(el => el?.addEventListener('input', updateEndPreview));
+
+    container.querySelector(`#sf-cancel-${id}`).addEventListener('click', () => {
+      container.querySelector(`#sf-wrap-${id}`).innerHTML = '';
+    });
+
+    container.querySelector(`#sf-save-${id}`).addEventListener('click', async () => {
+      const btn = container.querySelector(`#sf-save-${id}`);
+      const msg = container.querySelector(`#sf-msg-${id}`);
+      const sd  = sfStart.value;
+      const rt  = parseInt(sfRounds.value);
+      const rpd = parseInt(sfRpd.value);
+      const d   = new Date(sd); d.setDate(d.getDate() + rt * rpd - 1);
+      const body = {
+        name:               container.querySelector(`#sf-name-${id}`).value.trim(),
+        year:               liga.year,
+        start_date:         sd,
+        rounds_total:       rt,
+        round_duration_days: rpd,
+        location:           container.querySelector(`#sf-loc-${id}`).value.trim() || 'Clube do Play',
+        location_mode:      'single',
+        liga_id:            liga.id,
+      };
+      btn.disabled = true; btn.textContent = 'Criando…';
+      try {
+        const season = await api('/api/seasons', { method: 'POST', body });
+        // update local liga seasons list
+        const lObj = ligas.find(l => l.id === id);
+        if (lObj) { lObj.seasons = lObj.seasons || []; lObj.seasons.push(season.id); }
+        allSeasons.push(season);
+        container.querySelector(`#sf-wrap-${id}`).innerHTML = '';
+        renderLigaSeasons(liga, container);
+        showToast(`Temporada "${season.name}" criada!`);
+      } catch (err) {
+        msg.textContent = `Erro: ${err.message}`; msg.style.color = '#D94040';
+        btn.disabled = false; btn.textContent = 'Criar Temporada';
+      }
+    });
+  }
+
+  function renderLigaSeasons(liga, card) {
+    const seasonsWrap = card.querySelector(`#seasons-wrap-${liga.id}`);
+    if (!seasonsWrap) return;
+    const linked = allSeasons.filter(s => s.liga_id === liga.id)
+      .sort((a, b) => (a.start_date || '').localeCompare(b.start_date || ''));
+
+    const rt  = liga.default_rounds_total || 4;
+    const rpd = liga.default_round_duration_days || 10;
+    const est = estimateSeasons(liga.start_date, liga.close_date, rt, rpd);
+    const statusLabel = { pending:'Pendente', active:'Ativa', closed:'Encerrada' };
+
+    // Suggest start for next season: day after last season ends, or liga start
+    const lastSeason = linked[linked.length - 1];
+    let nextStart = liga.start_date || '';
+    if (lastSeason?.end_date) {
+      const d = new Date(lastSeason.end_date); d.setDate(d.getDate() + 1);
+      nextStart = d.toISOString().slice(0, 10);
+    }
+
+    seasonsWrap.innerHTML = `
+      <div class="liga-seasons-header">
+        <span class="liga-seasons-count">
+          ${linked.length} temporada${linked.length !== 1 ? 's' : ''} criada${linked.length !== 1 ? 's' : ''}
+          ${est !== null ? `<span class="liga-estimate-inline">/ ~${est} estimada${est !== 1 ? 's' : ''}</span>` : ''}
+        </span>
+        <button class="btn btn-ghost btn-sm" id="btn-new-season-${liga.id}">+ Nova Temporada</button>
+      </div>
+      ${linked.length ? `
+        <div class="liga-seasons-list">
+          ${linked.map(s => `
+            <div class="liga-season-row">
+              <span class="liga-season-name">${escapeHtml(s.name)}</span>
+              <span class="liga-season-dates">${s.start_date || '?'} → ${s.end_date || '?'}</span>
+              <span class="liga-season-info">${s.rounds_total} rod · ${s.round_duration_days} dias/rod</span>
+              <span class="liga-season-status liga-status-${s.status}">${statusLabel[s.status] || s.status}</span>
+            </div>`).join('')}
+        </div>` : `<p style="font-size:12px;color:var(--color-text-muted);margin:6px 0 0;">Nenhuma temporada criada ainda.</p>`}
+      <div id="sf-wrap-${liga.id}"></div>`;
+
+    seasonsWrap.querySelector(`#btn-new-season-${liga.id}`).addEventListener('click', () => {
+      const sfWrap = seasonsWrap.querySelector(`#sf-wrap-${liga.id}`);
+      if (sfWrap.innerHTML) { sfWrap.innerHTML = ''; return; }
+      sfWrap.innerHTML = buildSeasonForm(liga, linked.length + 1, nextStart);
+      attachSeasonForm(liga, seasonsWrap);
+    });
+  }
+
+  // --- Main render ---
+  function render() {
+    const ligasHtml = ligas.length ? ligas.map(l => {
+      const rt  = l.default_rounds_total || 4;
+      const rpd = l.default_round_duration_days || 10;
+      const est = estimateSeasons(l.start_date, l.close_date, rt, rpd);
+      return `
+        <div class="liga-card" data-id="${l.id}">
+          <div class="liga-card-header">
+            <span class="liga-card-name">${escapeHtml(l.name)}</span>
+            <span class="liga-status-badge liga-status-${l.status}">${
+              {active:'Ativa',closed:'Encerrada',pending:'Pendente'}[l.status]||l.status}</span>
+          </div>
+          <div class="liga-card-meta">
+            📅 ${l.year} &nbsp;·&nbsp; ${l.start_date||'?'} → ${l.close_date||'?'} &nbsp;·&nbsp; Reabre ${l.reopen_date||'?'}
+            &nbsp;·&nbsp; ${rt} rod × ${rpd} dias = ${rt*rpd} dias/temporada
+            ${est !== null ? `<span class="liga-estimate-inline">&nbsp;≈ ${est} temporadas</span>` : ''}
+          </div>
+          <div class="liga-card-awards">
+            ${(l.active_awards||[]).map(k=>`<span class="liga-award-chip">${AWARD_META[k]?.icon||''} ${AWARD_META[k]?.label||k}</span>`).join('')}
+          </div>
+          <div id="seasons-wrap-${l.id}" class="liga-seasons-wrap"></div>
+          <div class="liga-card-actions" style="margin-top:10px;">
+            <button class="btn btn-ghost btn-sm" onclick="editLiga('${l.id}')">Editar Liga</button>
+            <a href="#admin/anual?liga=${l.id}" class="btn btn-ghost btn-sm">Ver Premiações</a>
+            <button class="btn btn-ghost btn-sm btn-danger" onclick="deleteLiga('${l.id}','${escapeHtml(l.name)}')">Excluir</button>
+          </div>
+        </div>`;
+    }).join('') :
+    `<div class="empty-state"><div class="empty-state-icon">🔗</div>
+     <p class="empty-state-title">Nenhuma liga criada</p>
+     <p>Crie a primeira liga para iniciar o Ranking Contínuo.</p></div>`;
+
+    content.innerHTML = `
+      <div class="section-header">
+        <div><h1 class="section-title">Ligas / Ranking Contínuo</h1>
+          <p class="section-subtitle">Cada liga abrange um ano, define as temporadas e os prêmios do período.</p>
+        </div>
+        <button class="btn btn-primary" id="btn-new-liga">+ Nova Liga</button>
+      </div>
+      <div id="liga-form-wrap"></div>
+      <div id="ligas-list">${ligasHtml}</div>`;
+
+    content.querySelector('#btn-new-liga').addEventListener('click', () => {
+      content.querySelector('#liga-form-wrap').innerHTML = buildLigaForm();
+      setupLigaForm(null);
+      content.querySelector('#liga-form-wrap').scrollIntoView({ behavior: 'smooth' });
+    });
+
+    // Render seasons for each liga card
+    ligas.forEach(l => {
+      const card = content.querySelector(`[data-id="${l.id}"]`);
+      if (card) renderLigaSeasons(l, card);
+    });
+  }
+
+  window.editLiga = (id) => {
+    const liga = ligas.find(l => l.id === id);
+    if (!liga) return;
+    content.querySelector('#liga-form-wrap').innerHTML = buildLigaForm(liga);
+    setupLigaForm(liga);
+    content.querySelector('#liga-form-wrap').scrollIntoView({ behavior: 'smooth' });
+  };
+
+  window.deleteLiga = (id, name) => {
+    confirmModal('Excluir Liga', `Excluir "${name}"? Ação irreversível.`, async () => {
+      try {
+        await api(`/api/ligas/${id}`, { method: 'DELETE' });
+        ligas = ligas.filter(l => l.id !== id);
+        render();
+        showToast('Liga excluída.');
+      } catch (err) { showToast(`Erro: ${err.message}`, 'error'); }
+    }, 'Excluir');
+  };
+
+  render();
+}
+
+
+// ---------------------------------------------------------------------------
+// Admin — Premiações Anuais (Ranking Contínuo)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Admin: Lesões e Convidados
+// ---------------------------------------------------------------------------
+
+async function renderAdminLesoes(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+
+  let athletes = [], seasons = [], injuries = [], guestRequests = [];
   try {
-    [titles, athletes, seasons] = await Promise.all([
-      api(`/api/annual/${year}/titles`),
-      api('/api/athletes'),
-      api('/api/seasons'),
+    [athletes, seasons] = await Promise.all([api('/api/athletes'), api('/api/seasons')]);
+    injuries     = await api('/api/injuries');
+    guestRequests = await api('/api/guest-requests');
+  } catch (err) {
+    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
+    return;
+  }
+
+  const athletesById = Object.fromEntries(athletes.map(a => [a.id, a]));
+  const activeSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
+  const activeInjuries   = injuries.filter(i => i.status === 'active');
+  const pendingRequests  = guestRequests.filter(r => r.status === 'pending');
+  const readyGuests      = guestRequests.filter(r => r.status === 'confirmed' && r.confirmed_guest?.registered);
+
+  const tipoLabel = { lesao: 'Lesão', viagem: 'Viagem', outro: 'Outro' };
+  const tipoColor = { lesao: '#D94040', viagem: '#BA7517', outro: 'var(--color-text-muted)' };
+
+  function injuryCard(inj) {
+    const declaredLabel = inj.declared_by === 'admin' ? 'Admin' : (athletesById[inj.declared_by]?.nome || inj.declared_by);
+    const filled = inj.vacancy_filled_by
+      ? `<span style="font-size:12px;color:#69DB7C;">Reserva promovido: ${escapeHtml(athletesById[inj.vacancy_filled_by]?.nome || inj.vacancy_filled_by)}</span>`
+      : `<span style="font-size:12px;color:var(--color-text-muted);">Sem reserva — vaga em aberto</span>`;
+    return `
+      <div class="injury-card" data-id="${inj.id}">
+        <div class="injury-card-header">
+          <span class="injury-type-badge" style="background:${tipoColor[inj.tipo]}20;color:${tipoColor[inj.tipo]};border:1px solid ${tipoColor[inj.tipo]}40;">
+            ${tipoLabel[inj.tipo] || inj.tipo}
+          </span>
+          <span class="injury-athlete">${escapeHtml(inj.athlete_nome || athletesById[inj.athlete_id]?.nome || inj.athlete_id)}</span>
+          <span class="injury-cat">${catLabel(inj.category)}</span>
+          <button class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:12px;color:#D94040;"
+            onclick="deleteInjury('${inj.id}')">Cancelar</button>
+        </div>
+        <div class="injury-card-meta">
+          <span>Início: <strong>${inj.start_date}</strong></span>
+          <span>Retorno previsto: <strong>${inj.recovery_date}</strong></span>
+          <span>${inj.duration_days} dia(s)</span>
+          <span>Declarado por: ${escapeHtml(declaredLabel)}</span>
+        </div>
+        ${inj.notes ? `<p style="font-size:12px;color:var(--color-text-muted);margin:4px 0 0;">${escapeHtml(inj.notes)}</p>` : ''}
+        <div style="margin-top:6px;">${filled}</div>
+      </div>`;
+  }
+
+  function guestRequestCard(gr) {
+    const suggestionsHtml = gr.suggestions.length
+      ? gr.suggestions.map(s => {
+          const nome = s.nome_externo || athletesById[s.athlete_id]?.nome || s.athlete_id || '?';
+          const by   = s.suggested_by === 'admin' ? 'Admin' : (athletesById[s.suggested_by]?.nome || s.suggested_by);
+          const tel  = s.telefone ? `<span style="font-size:11px;color:var(--color-text-muted);">📱 ${s.telefone}</span>` : '';
+          return `<div class="suggestion-row">
+            <div style="display:flex;flex-direction:column;gap:2px;flex:1;">
+              <span style="font-weight:600;">${escapeHtml(nome)}</span>
+              <div style="display:flex;gap:8px;align-items:center;">
+                ${tel}
+                <span style="font-size:11px;color:var(--color-text-muted);">por ${escapeHtml(by)}</span>
+              </div>
+            </div>
+            <button class="btn btn-sm btn-primary"
+              onclick="confirmGuestWithLink('${gr.id}', '${s.id}', '${escapeHtml(s.nome_externo || '')}', '${s.telefone || ''}')">
+              Confirmar + Gerar Link
+            </button>
+          </div>`;
+        }).join('')
+      : `<p style="font-size:12px;color:var(--color-text-muted);">Nenhuma sugestão ainda.</p>`;
+
+    return `
+      <div class="guest-request-card" data-id="${gr.id}">
+        <div class="guest-request-header">
+          ${catLabel(gr.cat)} Grupo ${gr.group_idx + 1}
+          <span style="font-size:12px;color:var(--color-text-muted);margin-left:8px;">Rodada: ${gr.round_id.slice(0,8)}…</span>
+        </div>
+        <div style="margin:8px 0 4px;font-size:12px;font-weight:700;">Sugestões dos atletas:</div>
+        ${suggestionsHtml}
+        <div class="guest-actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" onclick="openAddGuestModal('${gr.id}')">+ Indicar convidado</button>
+          <button class="btn btn-sm btn-ghost" style="color:#D94040;" onclick="markGuestWo('${gr.id}')">Marcar W.O.</button>
+        </div>
+      </div>`;
+  }
+
+  function readyGuestCard(gr) {
+    const cg = gr.confirmed_guest;
+    const inj = injuries.find(i => i.id === gr.injury_id);
+    const injuredName = inj
+      ? escapeHtml(athletesById[inj.athlete_id]?.nome || inj.athlete_id)
+      : '—';
+    const injuredId = inj?.athlete_id || null;
+
+    return `
+      <div class="guest-request-card" style="border-left-color:#69DB7C;" data-id="${gr.id}">
+        <div class="guest-request-header" style="color:#69DB7C;">
+          ✅ ${catLabel(gr.cat)} Grupo ${gr.group_idx + 1} — Convidado Pronto
+        </div>
+        <div style="margin:8px 0;font-size:13px;">
+          <strong>${escapeHtml(cg.nome_display)}</strong>
+          ${cg.telefone ? `<span style="font-size:12px;color:var(--color-text-muted);margin-left:6px;">📱 ${escapeHtml(cg.telefone)}</span>` : ''}
+        </div>
+        ${injuredId ? `
+        <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:8px;">
+          Substitui: <strong>${injuredName}</strong>
+        </p>
+        <button class="btn btn-sm btn-primary"
+          onclick="addGuestToRound('${gr.id}', '${gr.round_id}', '${gr.cat}', ${gr.group_idx}, '${injuredId}', '${cg.guest_id}', '${escapeHtml(cg.nome_display)}')">
+          Adicionar à Rodada
+        </button>` : `
+        <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:8px;">
+          Lesão não vinculada — selecione o atleta a substituir manualmente.
+        </p>
+        <button class="btn btn-sm btn-primary"
+          onclick="addGuestToRoundManual('${gr.id}', '${gr.round_id}', '${gr.cat}', ${gr.group_idx}, '${cg.guest_id}', '${escapeHtml(cg.nome_display)}')">
+          Adicionar à Rodada (escolher atleta)
+        </button>`}
+      </div>`;
+  }
+
+  const injuriesHtml = activeInjuries.length
+    ? activeInjuries.map(injuryCard).join('')
+    : `<p class="placeholder-text">Nenhuma lesão ativa.</p>`;
+
+  const pendingHtml = pendingRequests.length
+    ? pendingRequests.map(guestRequestCard).join('')
+    : `<p class="placeholder-text">Nenhum pedido de convidado pendente.</p>`;
+
+  const readyHtml = readyGuests.length
+    ? readyGuests.map(readyGuestCard).join('')
+    : '';
+
+  const defaultSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
+  const seasonOptions = seasons
+    .filter(s => s.status !== 'cancelled')
+    .map(s => `<option value="${s.id}" ${s.id === defaultSeason?.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+
+  content.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">Lesões e Convidados</h1>
+        <p class="section-subtitle">Gerencie afastamentos e substitutos por rodada.</p>
+      </div>
+    </div>
+
+    <div class="lesoes-grid">
+
+      <!-- Declarar nova lesão -->
+      <div class="card" style="padding:var(--space-md);">
+        <p style="font-size:13px;font-weight:700;margin:0 0 12px;">Declarar Afastamento</p>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Atleta</label>
+            <select id="inj-athlete" class="form-input">
+              <option value="">Selecione…</option>
+              ${athletes.map(a => `<option value="${a.id}">${escapeHtml(a.nome)} — Cat ${a.current_category || '?'}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Temporada</label>
+            <select id="inj-season" class="form-input">${seasonOptions}</select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tipo</label>
+            <select id="inj-tipo" class="form-input">
+              <option value="lesao">Lesão</option>
+              <option value="viagem">Viagem</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Data de início</label>
+            <input id="inj-start" type="date" class="form-input" value="${new Date().toISOString().slice(0,10)}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Dias de afastamento</label>
+            <input id="inj-days" type="number" class="form-input" min="1" max="365" placeholder="ex: 30" value="30">
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Observações</label>
+            <input id="inj-notes" type="text" class="form-input" placeholder="Opcional">
+          </div>
+        </div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-muted);" id="inj-recovery-preview"></div>
+        <button id="btn-declarar-lesao" class="btn btn-primary" style="margin-top:12px;">Declarar Afastamento</button>
+        <span id="inj-msg" style="font-size:13px;margin-left:10px;"></span>
+      </div>
+
+      <!-- Lesões ativas -->
+      <div>
+        <p style="font-size:13px;font-weight:700;margin:0 0 10px;">Afastamentos Ativos (${activeInjuries.length})</p>
+        ${injuriesHtml}
+      </div>
+
+      <!-- Pedidos de convidado pendentes -->
+      <div>
+        <p style="font-size:13px;font-weight:700;margin:0 0 10px;">Pedidos de Convidado Pendentes (${pendingRequests.length})</p>
+        ${pendingHtml}
+        ${readyHtml ? `
+        <p style="font-size:13px;font-weight:700;margin:16px 0 10px;color:#69DB7C;">Convidados Prontos para Adicionar</p>
+        ${readyHtml}` : ''}
+      </div>
+
+    </div>`;
+
+  // Preview de retorno
+  function updateRecoveryPreview() {
+    const start = content.querySelector('#inj-start').value;
+    const days  = parseInt(content.querySelector('#inj-days').value);
+    const el    = content.querySelector('#inj-recovery-preview');
+    if (start && days > 0) {
+      const dt = new Date(start + 'T12:00:00');
+      dt.setDate(dt.getDate() + days);
+      el.textContent = `Retorno previsto: ${dt.toISOString().slice(0, 10)}`;
+    } else {
+      el.textContent = '';
+    }
+  }
+  content.querySelector('#inj-start').addEventListener('input', updateRecoveryPreview);
+  content.querySelector('#inj-days').addEventListener('input', updateRecoveryPreview);
+  updateRecoveryPreview();
+
+  // Declarar lesão
+  content.querySelector('#btn-declarar-lesao').addEventListener('click', async () => {
+    const athleteId = content.querySelector('#inj-athlete').value;
+    const seasonId  = content.querySelector('#inj-season').value;
+    const tipo      = content.querySelector('#inj-tipo').value;
+    const startDate = content.querySelector('#inj-start').value;
+    const days      = parseInt(content.querySelector('#inj-days').value);
+    const notes     = content.querySelector('#inj-notes').value;
+    const msg       = content.querySelector('#inj-msg');
+
+    if (!athleteId || !seasonId || !startDate || !days) {
+      msg.textContent = 'Preencha atleta, temporada, data e dias.';
+      msg.style.color = '#D94040'; return;
+    }
+    try {
+      const res = await api('/api/injuries', { method: 'POST', body: { athlete_id: athleteId, season_id: seasonId, tipo, start_date: startDate, duration_days: days, notes } });
+      const promoted = res.reserva_promoted;
+      showToast(promoted ? `Lesão declarada. Reserva promovido!` : `Lesão declarada. Vaga em aberto.`);
+      await renderAdminLesoes(content);
+    } catch (err) {
+      msg.textContent = `Erro: ${err.message}`;
+      msg.style.color = '#D94040';
+    }
+  });
+}
+
+window.deleteInjury = async function(id) {
+  confirmModal('Cancelar Afastamento', 'Cancelar este registro de lesão?', async () => {
+    try {
+      await api(`/api/injuries/${id}`, { method: 'DELETE' });
+      showToast('Afastamento cancelado.');
+      const content = app.querySelector('#admin-content');
+      await renderAdminLesoes(content);
+    } catch (err) { showToast('Erro: ' + err.message, 'error'); }
+  });
+};
+
+window.openAddGuestModal = function(grId) {
+  openModal('Indicar Convidado',
+    `<div class="form-group">
+       <label class="form-label">Nome completo</label>
+       <input id="guest-nome-ext" class="form-input" placeholder="Nome do convidado" autofocus>
+     </div>
+     <div class="form-group">
+       <label class="form-label">Telefone (WhatsApp)</label>
+       <input id="guest-telefone" class="form-input" placeholder="55 11 99999-9999" inputmode="tel">
+     </div>
+     <p style="font-size:12px;color:var(--color-text-muted);">Um link de cadastro será gerado para enviar ao convidado.</p>
+     <p id="guest-modal-err" class="field-error hidden"></p>`,
+    `<button id="btn-guest-confirm" class="btn btn-primary">Confirmar + Gerar Link</button>
+     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>`
+  );
+  document.getElementById('btn-guest-confirm').addEventListener('click', async () => {
+    const nome = document.getElementById('guest-nome-ext').value.trim();
+    const tel  = document.getElementById('guest-telefone').value.trim();
+    const err  = document.getElementById('guest-modal-err');
+    if (!nome) {
+      err.textContent = 'Nome obrigatório.';
+      err.classList.remove('hidden'); return;
+    }
+    try {
+      const res = await api(`/api/guest-requests/${grId}/confirm`, {
+        method: 'POST',
+        body: { nome_externo: nome, telefone: tel, guest_type: 'convidado' },
+      });
+      closeModal();
+      showGuestLink(res.register_link, nome);
+      const content = app.querySelector('#admin-content');
+      await renderAdminLesoes(content);
+    } catch (e) {
+      err.textContent = 'Erro: ' + e.message;
+      err.classList.remove('hidden');
+    }
+  });
+};
+
+window.confirmGuestWithLink = async function(grId, suggestionId, nome, telefone) {
+  try {
+    const res = await api(`/api/guest-requests/${grId}/confirm`, {
+      method: 'POST',
+      body: { suggestion_id: suggestionId, nome_externo: nome, telefone, guest_type: 'convidado' },
+    });
+    showGuestLink(res.register_link, nome);
+    const content = app.querySelector('#admin-content');
+    await renderAdminLesoes(content);
+  } catch (err) { showToast('Erro: ' + err.message, 'error'); }
+};
+
+function showGuestLink(link, nome) {
+  openModal('Link de Cadastro Gerado',
+    `<p style="font-size:14px;margin-bottom:12px;">
+       Envie este link para <strong>${escapeHtml(nome)}</strong> via WhatsApp:
+     </p>
+     <div class="guest-link-box" id="guest-link-text">${escapeHtml(link)}</div>
+     <p style="font-size:12px;color:var(--color-text-muted);margin-top:8px;">
+       O convidado acessa o link, define um PIN e já pode fazer login na rodada.
+     </p>`,
+    `<button id="btn-copy-link" class="btn btn-primary">Copiar Link</button>
+     <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>`
+  );
+  document.getElementById('btn-copy-link').addEventListener('click', () => {
+    navigator.clipboard.writeText(link).then(() => {
+      document.getElementById('btn-copy-link').textContent = 'Copiado!';
+    });
+  });
+};
+
+window.markGuestWo = async function(grId) {
+  confirmModal('Marcar W.O.', 'Confirma W.O. para este grupo? O grupo não terá resultado nesta rodada.', async () => {
+    try {
+      await api(`/api/guest-requests/${grId}/wo`, { method: 'POST' });
+      showToast('W.O. registrado.');
+      const content = app.querySelector('#admin-content');
+      await renderAdminLesoes(content);
+    } catch (err) { showToast('Erro: ' + err.message, 'error'); }
+  });
+};
+
+window.addGuestToRound = async function(grId, roundId, cat, groupIdx, oldAthleteId, newAthleteId, nomePara) {
+  confirmModal(
+    'Adicionar Convidado à Rodada',
+    `Confirma a entrada de <strong>${escapeHtml(nomePara)}</strong> no grupo ${cat}${groupIdx + 1}?`,
+    async () => {
+      try {
+        await api(`/api/rounds/${roundId}/substitute`, {
+          method: 'POST',
+          body: { cat, group_idx: groupIdx, old_athlete_id: oldAthleteId, new_athlete_id: newAthleteId, guest_request_id: grId },
+        });
+        showToast(`${nomePara} adicionado ao grupo com sucesso!`);
+        const content = app.querySelector('#admin-content');
+        await renderAdminLesoes(content);
+      } catch (err) { showToast('Erro: ' + err.message, 'error'); }
+    }
+  );
+};
+
+window.addGuestToRoundManual = async function(grId, roundId, cat, groupIdx, newAthleteId, nomePara) {
+  // Fetch the round to list the current group members for selection
+  let rnd;
+  try { rnd = await api(`/api/rounds/${roundId}`); }
+  catch (err) { showToast('Erro ao carregar rodada: ' + err.message, 'error'); return; }
+
+  const group = rnd.groups?.[cat]?.[groupIdx] || [];
+  let athletes = [];
+  try { athletes = await api('/api/athletes'); } catch (_) {}
+  const byId = Object.fromEntries(athletes.map(a => [a.id, a]));
+
+  const opts = group.map(aid =>
+    `<option value="${aid}">${escapeHtml(byId[aid]?.nome || aid)}</option>`
+  ).join('');
+
+  openModal(
+    'Escolher atleta a substituir',
+    `<p style="font-size:13px;margin-bottom:12px;">Quem <strong>${escapeHtml(nomePara)}</strong> vai substituir?</p>
+     <select id="manual-old-athlete" class="form-input">${opts}</select>`,
+    `<button id="btn-manual-sub" class="btn btn-primary">Confirmar Substituição</button>
+     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>`
+  );
+  document.getElementById('btn-manual-sub').addEventListener('click', async () => {
+    const oldId = document.getElementById('manual-old-athlete').value;
+    closeModal();
+    await window.addGuestToRound(grId, roundId, cat, groupIdx, oldId, newAthleteId, nomePara);
+  });
+};
+
+async function renderAdminAnual(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+
+  // Check for ?liga= param in URL hash
+  const hashParams = new URLSearchParams(location.hash.split('?')[1] || '');
+  const preselectedLiga = hashParams.get('liga');
+
+  let ligas = [], galeria = [];
+  try {
+    [ligas, galeria] = await Promise.all([
+      api('/api/ligas'),
+      api('/api/titles').then(d => d.titles || []),
     ]);
   } catch (err) {
     content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
     return;
   }
 
-  const rei   = titles.super_rei;
-  const pato  = titles.super_pato;
-  const patos = titles.pato_por_categoria || {};
-  const ranking = titles.ranking_anual || [];
-
-  // Verifica se já foi gravado na galeria
-  let galeria = [];
-  try { galeria = (await api('/api/titles')).titles || []; } catch (_) {}
-  const jaGravado = galeria.some(t => t.year === year);
-
-  const trophyCard = (label, entry, variant) => {
-    if (!entry) return `
-      <div class="title-trophy-card" style="opacity:.45;">
-        <div class="trophy-icon">—</div>
-        <div class="trophy-title">${label}</div>
-        <div class="trophy-name">Nenhum elegível</div>
-      </div>`;
-    return `
-      <div class="title-trophy-card ${variant}">
-        <div class="trophy-icon">${variant === 'rei' ? '👑' : '🦆'}</div>
-        <div class="trophy-title">${label} ${year}</div>
-        <div class="trophy-name">${escapeHtml(entry.nome)}</div>
-        <div class="ws-score">${catLabel(entry.category)} · ws ${entry.weighted_score.toFixed(2)}</div>
-      </div>`;
+  const AWARD_META = {
+    rei_do_play:        { icon: '👑', label: 'Rei do Play',       stat: e => `${e.pts_per_round?.toFixed(2) || '—'} pts/rod` },
+    atleta_revelacao:   { icon: '🌟', label: 'Atleta Revelação',   stat: e => `${e.promotions_count || 0} promoção(ões)` },
+    pato_do_play:       { icon: '🦆', label: 'Pato do Play',       stat: e => `${e.demotions_count || 0} rebaixamento(s)` },
+    melhor_performance: { icon: '⚡', label: 'Melhor Performance',  stat: e => `${e.best_round_pts ?? '—'} pts (saldo ${e.best_round_saldo ?? '—'})` },
+    maior_virada:       { icon: '📈', label: 'Maior Virada',        stat: e => `+${e.virada?.toFixed ? e.virada.toFixed(2) : e.virada ?? '—'} pts/rod de evolução` },
   };
 
-  const patosCatHtml = ['A','B','C','D'].map(cat => {
-    const e = patos[cat];
-    if (!e) return `
-      <div class="galeria-title-item" style="opacity:.45;">
-        ${catLabel(cat)}<br><span style="font-size:12px;color:var(--color-text-muted);">—</span>
+  function awardCard(key, winner, inactive) {
+    const meta = AWARD_META[key];
+    if (inactive) return `
+      <div class="award-card award-inactive">
+        <div class="award-icon">${meta.icon}</div>
+        <div class="award-name">${meta.label}</div>
+        <div class="award-winner">— inativo —</div>
+      </div>`;
+    if (!winner) return `
+      <div class="award-card award-empty">
+        <div class="award-icon">${meta.icon}</div>
+        <div class="award-name">${meta.label}</div>
+        <div class="award-winner">Nenhum elegível</div>
       </div>`;
     return `
-      <div class="galeria-title-item">
-        <div style="margin-bottom:4px;">🦆 ${catLabel(cat)}</div>
-        <strong>${escapeHtml(e.nome)}</strong>
-        <div style="font-size:11px;color:var(--color-text-muted);">ws ${e.weighted_score.toFixed(2)}</div>
+      <div class="award-card award-filled">
+        <div class="award-icon">${meta.icon}</div>
+        <div class="award-name">${meta.label}</div>
+        <div class="award-winner">${escapeHtml(winner.nome)}</div>
+        <div class="award-stat">${catLabel(winner.category)} · ${meta.stat(winner)}</div>
       </div>`;
-  }).join('');
+  }
 
-  const rankingHtml = ranking.length ? `
-    <div class="card" style="padding:0;overflow:hidden;margin-top:16px;">
-      <table class="annual-ranking-table">
-        <thead>
-          <tr>
-            <th>#</th><th>Atleta</th><th>Cat Final</th>
+  async function renderLiga(ligaId) {
+    const ligaSection = content.querySelector('#liga-awards-section');
+    ligaSection.innerHTML = `<p class="placeholder-text">Carregando premiações…</p>`;
+    let data;
+    try {
+      data = await api(`/api/ligas/${ligaId}/awards`);
+    } catch (err) {
+      ligaSection.innerHTML = `<p style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
+      return;
+    }
+
+    const { liga, awards, active_awards, ranking } = data;
+    const jaGravado = galeria.some(t => t.liga_id === ligaId);
+
+    const awardsHtml = Object.keys(AWARD_META).map(key => {
+      const isActive = active_awards.includes(key);
+      const winner = awards[key];
+      return awardCard(key, isActive ? winner : null, !isActive);
+    }).join('');
+
+    const rankingHtml = ranking.length ? `
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table class="annual-ranking-table">
+          <thead><tr>
+            <th>#</th><th>Atleta</th><th>Cat</th>
             <th class="num">Temporadas</th><th class="num">WS</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${ranking.map(e => `
-            <tr>
-              <td><span class="rank-position ${['gold','silver','bronze'][e.rank-1]||''}">${e.rank}</span></td>
-              <td>${escapeHtml(e.nome)}</td>
-              <td>${catLabel(e.category)}</td>
-              <td class="num">${e.seasons_count}</td>
-              <td class="num ws-score">${e.weighted_score.toFixed(2)}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>` : `<p class="placeholder-text" style="margin-top:16px;">Nenhum atleta elegível em ${year}.</p>`;
+          </tr></thead>
+          <tbody>
+            ${ranking.map(e => `
+              <tr>
+                <td><span class="rank-position ${['gold','silver','bronze'][e.rank-1]||''}">${e.rank}</span></td>
+                <td>${escapeHtml(e.nome)}</td>
+                <td>${catLabel(e.category)}</td>
+                <td class="num">${e.seasons_count}</td>
+                <td class="num ws-score">${e.weighted_score.toFixed(2)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : `<p class="placeholder-text">Nenhum atleta elegível ainda.</p>`;
+
+    // Ranking por categoria — agrupa por última categoria jogada, ordena por pts/rod desc
+    const catOrder = ['A', 'B', 'C', 'D'];
+    const byCat = catOrder.reduce((acc, c) => ({ ...acc, [c]: [] }), {});
+    ranking.forEach(e => { if (byCat[e.category]) byCat[e.category].push(e); });
+    catOrder.forEach(c => {
+      byCat[c].sort((a, b) => {
+        const ppr = e => {
+          const pts = (e.seasons_played || []).reduce((s, sp) => s + sp.points, 0);
+          const rds = (e.seasons_played || []).reduce((s, sp) => s + sp.rounds_played, 0);
+          return rds ? pts / rds : 0;
+        };
+        return ppr(b) - ppr(a);
+      });
+    });
+    const catRankingHtml = catOrder
+      .filter(c => byCat[c].length > 0)
+      .map(c => {
+        const rows = byCat[c].map((e, i) => {
+          const totalPts = (e.seasons_played || []).reduce((s, sp) => s + (sp.points || 0), 0);
+          const totalRds = (e.seasons_played || []).reduce((s, sp) => s + (sp.rounds_played || 0), 0);
+          const ppr = totalRds ? (totalPts / totalRds).toFixed(2) : '—';
+          return `
+          <tr>
+            <td><span class="rank-position ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}">${i + 1}</span></td>
+            <td>${escapeHtml(e.nome)}</td>
+            <td class="num">${e.seasons_count}</td>
+            <td class="num">${ppr}</td>
+          </tr>`;
+        }).join('');
+        return `
+          <div style="margin-bottom:16px;">
+            <p style="font-size:12px;font-weight:700;margin:0 0 6px;display:flex;align-items:center;gap:8px;">
+              ${catLabel(c)} <span style="font-weight:400;color:var(--color-text-muted);">${byCat[c].length} atleta(s)</span>
+            </p>
+            <div class="card" style="padding:0;overflow:hidden;">
+              <table class="annual-ranking-table">
+                <thead><tr>
+                  <th>#</th><th>Atleta</th>
+                  <th class="num">Temp.</th><th class="num">Pts/Rod</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }).join('');
+
+    ligaSection.innerHTML = `
+      <p style="font-size:13px;font-weight:700;margin:0 0 12px;">
+        ${escapeHtml(liga.name)} · ${liga.year} · Encerra ${liga.close_date}
+      </p>
+      <div class="awards-grid">${awardsHtml}</div>
+
+      <p style="font-size:13px;font-weight:700;margin:20px 0 8px;">Ranking Geral ${liga.year}</p>
+      ${rankingHtml}
+
+      ${ranking.length ? `
+      <p style="font-size:13px;font-weight:700;margin:20px 0 8px;">Ranking por Categoria</p>
+      ${catRankingHtml}` : ''}
+
+      <div style="margin-top:20px;">
+        ${jaGravado
+          ? `<div class="alert alert-info">Premiações de ${liga.year} já registradas na galeria.</div>`
+          : (ranking.length
+            ? `<div class="fechamento-confirm-box">
+                <p style="font-size:14px;font-weight:700;color:var(--color-accent);margin-bottom:6px;">Registrar Premiações ${liga.year}</p>
+                <p style="font-size:13px;margin-bottom:12px;">Grava os prêmios e ranking na galeria histórica. Definitivo.</p>
+                <button id="btn-apply-awards" class="btn btn-primary">Registrar na Galeria</button>
+                <span id="awards-apply-msg" style="font-size:13px;margin-left:10px;"></span>
+               </div>`
+            : '')}
+      </div>`;
+
+    ligaSection.querySelector('#btn-apply-awards')?.addEventListener('click', () => {
+      confirmModal('Registrar Premiações', `Registrar premiações de ${liga.year} na galeria?`, async () => {
+        const btn = ligaSection.querySelector('#btn-apply-awards');
+        btn.disabled = true; btn.textContent = 'Registrando…';
+        try {
+          await api(`/api/ligas/${ligaId}/awards/apply`, { method: 'POST' });
+          galeria = (await api('/api/titles')).titles || [];
+          showToast(`Premiações de ${liga.year} registradas!`);
+          renderLiga(ligaId);
+        } catch (err) {
+          const msg = ligaSection.querySelector('#awards-apply-msg');
+          msg.textContent = `Erro: ${err.message}`;
+          msg.style.color = '#D94040';
+          btn.disabled = false; btn.textContent = 'Registrar na Galeria';
+        }
+      }, 'Registrar');
+    });
+  }
+
+  if (!ligas.length) {
+    content.innerHTML = `
+      <div class="section-header">
+        <h1 class="section-title">Premiações Anuais</h1>
+      </div>
+      <div class="empty-state">
+        <div class="empty-state-icon">🏆</div>
+        <p class="empty-state-title">Nenhuma liga criada</p>
+        <p>Crie uma liga em <a href="#admin/liga">🔗 Ligas</a> para gerenciar as premiações.</p>
+      </div>`;
+    return;
+  }
+
+  const currentLigaId = preselectedLiga || ligas[0]?.id;
+
+  const selectHtml = ligas.map(l =>
+    `<option value="${l.id}" ${l.id === currentLigaId ? 'selected' : ''}>${escapeHtml(l.name)} (${l.year})</option>`
+  ).join('');
 
   content.innerHTML = `
     <div class="section-header">
-      <div>
-        <h1 class="section-title">Títulos Anuais</h1>
-        <p class="section-subtitle">Temporada ${year} · ${titles.eligible_count} atleta(s) elegível(is)</p>
+      <div><h1 class="section-title">Premiações Anuais</h1>
+        <p class="section-subtitle">Selecione uma liga para ver prêmios e ranking.</p>
       </div>
     </div>
-
-    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px;">
-      ${trophyCard('Super Rei', rei, 'rei')}
-      ${trophyCard('Super Pato', pato, 'pato')}
+    <div style="margin-bottom:20px;">
+      <label class="form-label">Liga</label>
+      <select id="liga-select" class="form-input" style="max-width:360px;">${selectHtml}</select>
     </div>
+    <div id="liga-awards-section"><p class="placeholder-text">Carregando…</p></div>`;
 
-    <div class="card" style="margin-bottom:24px;">
-      <p style="font-size:13px;font-weight:700;color:var(--color-text-muted);
-         text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">Pato por Categoria</p>
-      <div class="galeria-titles-grid">${patosCatHtml}</div>
-    </div>
-
-    <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
-      <p style="font-size:13px;font-weight:700;margin:0;">Ranking Anual ${year}</p>
-    </div>
-    ${rankingHtml}
-
-    <div style="margin-top:24px;">
-      ${jaGravado
-        ? `<div class="alert alert-info">Títulos de ${year} já registrados na galeria.</div>`
-        : (ranking.length
-          ? `<div class="fechamento-confirm-box">
-               <p style="font-size:15px;font-weight:700;color:var(--color-accent);margin-bottom:8px;">Registrar Títulos ${year}</p>
-               <p style="font-size:13px;margin-bottom:12px;">
-                 Grava Super Rei, Super Pato e Patos por categoria na galeria histórica. Esta ação é definitiva.
-               </p>
-               <button id="btn-apply-titles" class="btn btn-primary">Registrar na Galeria</button>
-               <p id="apply-titles-msg" class="hidden" style="margin-top:10px;font-size:13px;"></p>
-             </div>`
-          : '')}
-    </div>`;
-
-  content.querySelector('#btn-apply-titles')?.addEventListener('click', () => {
-    confirmModal(
-      'Registrar Títulos',
-      `Registrar títulos de ${year} na galeria? Esta ação grava Super Rei, Super Pato e Patos por categoria de forma definitiva.`,
-      async () => {
-        const btn = content.querySelector('#btn-apply-titles');
-        const msg = content.querySelector('#apply-titles-msg');
-        btn.disabled = true;
-        btn.textContent = 'Registrando…';
-        try {
-          await api(`/api/annual/${year}/titles/apply`, { method: 'POST' });
-          msg.textContent = `✓ Títulos de ${year} registrados com sucesso!`;
-          msg.style.color = 'var(--color-cat-c)';
-          msg.classList.remove('hidden');
-          setTimeout(() => renderAdminAnual(content), 1800);
-        } catch (err) {
-          msg.textContent = `Erro: ${err.message}`;
-          msg.style.color = '#D94040';
-          msg.classList.remove('hidden');
-          btn.disabled = false;
-          btn.textContent = 'Registrar na Galeria';
-        }
-      },
-      'Registrar na Galeria'
-    );
+  content.querySelector('#liga-select').addEventListener('change', e => {
+    renderLiga(e.target.value);
   });
+
+  renderLiga(currentLigaId);
 }
 
 
@@ -3929,42 +5278,42 @@ async function renderPublicoTitulos(container) {
     return;
   }
 
-  const entryHtml = (label, icon, entry) => {
-    if (!entry) return `
-      <div class="galeria-title-item" style="opacity:.5;">
-        <div>${icon} ${label}</div>
-        <span style="font-size:12px;color:var(--color-text-muted);">—</span>
-      </div>`;
-    return `
-      <div class="galeria-title-item">
-        <div>${icon} ${label}</div>
-        <strong>${escapeHtml(entry.nome)}</strong>
-        <div style="font-size:11px;color:var(--color-text-muted);">${catLabel(entry.category)} · ws ${(entry.weighted_score||0).toFixed(2)}</div>
-      </div>`;
+  const AWARD_META = {
+    rei_do_play:        { icon: '👑', label: 'Rei do Play' },
+    atleta_revelacao:   { icon: '🌟', label: 'Atleta Revelação' },
+    pato_do_play:       { icon: '🦆', label: 'Pato do Play' },
+    melhor_performance: { icon: '⚡', label: 'Melhor Performance' },
+    maior_virada:       { icon: '📈', label: 'Maior Virada' },
   };
 
   container.innerHTML = titles.map(t => {
-    const patos = t.pato_por_categoria || {};
+    const awards = t.awards || {};
+    const awardNames = t.award_names || {};
+    const awardIcons = t.award_icons || {};
+    const activeAwards = t.active_awards || Object.keys(AWARD_META);
+
+    const awardsHtml = activeAwards.map(key => {
+      const winner = awards[key];
+      const meta = AWARD_META[key] || { icon: awardIcons[key] || '🏆', label: awardNames[key] || key };
+      if (!winner) return `
+        <div class="galeria-title-item" style="opacity:.5;">
+          <div>${meta.icon} ${meta.label}</div>
+          <span style="font-size:12px;color:var(--color-text-muted);">—</span>
+        </div>`;
+      return `
+        <div class="galeria-title-item">
+          <div>${meta.icon} ${meta.label}</div>
+          <strong>${escapeHtml(winner.nome)}</strong>
+          <div style="font-size:11px;color:var(--color-text-muted);">${catLabel(winner.category)}</div>
+        </div>`;
+    }).join('');
+
+    const ligaLabel = t.liga_name ? `<span style="font-size:12px;font-weight:400;color:var(--color-text-muted);margin-left:8px;">${escapeHtml(t.liga_name)}</span>` : '';
+
     return `
       <div class="galeria-card">
-        <div class="galeria-year-header">${t.year}</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;justify-content:center;">
-          <div class="title-trophy-card rei" style="flex:1;min-width:160px;">
-            <div class="trophy-icon">👑</div>
-            <div class="trophy-title">Super Rei</div>
-            <div class="trophy-name">${t.super_rei ? escapeHtml(t.super_rei.nome) : '—'}</div>
-            ${t.super_rei ? `<div class="ws-score">ws ${(t.super_rei.weighted_score||0).toFixed(2)}</div>` : ''}
-          </div>
-          <div class="title-trophy-card pato" style="flex:1;min-width:160px;">
-            <div class="trophy-icon">🦆</div>
-            <div class="trophy-title">Super Pato</div>
-            <div class="trophy-name">${t.super_pato ? escapeHtml(t.super_pato.nome) : '—'}</div>
-            ${t.super_pato ? `<div class="ws-score">ws ${(t.super_pato.weighted_score||0).toFixed(2)}</div>` : ''}
-          </div>
-        </div>
-        <div class="galeria-titles-grid">
-          ${['A','B','C','D'].map(cat => entryHtml(`Cat ${cat}`, '🦆', patos[cat])).join('')}
-        </div>
+        <div class="galeria-year-header">${t.year}${ligaLabel}</div>
+        <div class="galeria-titles-grid">${awardsHtml}</div>
       </div>`;
   }).join('');
 }
@@ -3984,7 +5333,23 @@ function _buildGroupHtml(group) {
   if (!group.has_result) {
     return `<p style="font-size:12px;color:var(--color-text-muted);padding:6px 0;">Sem resultado registrado.</p>`;
   }
-  return group.athletes.map((a, i) => `
+
+  // Monta mapa nome por athlete_id a partir dos atletas do grupo
+  const nameById = Object.fromEntries((group.athletes || []).map(a => [a.athlete_id, a.nome]));
+
+  const scorelinesHtml = (group.sets || []).map(s => {
+    const nameA = (s.team_a || []).map(id => escapeHtml((nameById[id] || id).split(' ')[0])).join(' / ');
+    const nameB = (s.team_b || []).map(id => escapeHtml((nameById[id] || id).split(' ')[0])).join(' / ');
+    const winA = s.score_a > s.score_b;
+    const winB = s.score_b > s.score_a;
+    return `<div class="set-scoreline">
+      <span class="set-team ${winA ? 'set-winner' : ''}">${nameA}</span>
+      <span class="set-score">${s.score_a}<span class="set-sep">×</span>${s.score_b}</span>
+      <span class="set-team set-team-right ${winB ? 'set-winner' : ''}">${nameB}</span>
+    </div>`;
+  }).join('');
+
+  const athleteRows = group.athletes.map((a, i) => `
     <div class="history-score-row">
       <span class="history-score-rank">${i + 1}</span>
       <span class="history-score-name">${escapeHtml(a.nome)}</span>
@@ -3993,6 +5358,10 @@ function _buildGroupHtml(group) {
       </span>
       <span class="history-score-total">${a.total ?? '—'}</span>
     </div>`).join('');
+
+  return `
+    ${scorelinesHtml ? `<div class="set-scorelines">${scorelinesHtml}</div>` : ''}
+    <div style="margin-top:${scorelinesHtml ? '10px' : '0'}">${athleteRows}</div>`;
 }
 
 async function renderPublicoResultados(container, season) {
@@ -4024,6 +5393,17 @@ async function renderPublicoResultados(container, season) {
     return;
   }
 
+  // Coleta categorias únicas presentes nos rounds
+  const presentCatsPub = [...new Set(
+    rounds.flatMap(r => r.groups.map(g => g.cat))
+  )].filter(Boolean).sort();
+
+  const catTabsHtml = `
+    <div class="cat-tabs" id="pub-resultados-tabs">
+      <button class="cat-tab active" data-filter="all">Todas</button>
+      ${presentCatsPub.map(c => `<button class="cat-tab" data-filter="${c}">Cat ${c}</button>`).join('')}
+    </div>`;
+
   const html = rounds.map(rnd => {
     const groupsWithResults = rnd.groups.filter(g => g.has_result);
     const totalGroups = rnd.groups.length;
@@ -4034,16 +5414,20 @@ async function renderPublicoResultados(container, season) {
     const groupsHtml = rnd.groups
       .filter(g => g.athletes.length > 0)
       .map(g => `
-        <div class="history-group-block">
+        <div class="history-group-block" data-cat="${g.cat}">
           <div class="history-group-label">${catLabel(g.cat)} · Grupo ${g.group_idx + 1}</div>
           ${_buildGroupHtml(g)}
         </div>`).join('');
 
+    const periodMeta = rnd.start_date
+      ? `${rnd.start_date} → ${rnd.end_date || '?'}`
+      : '';
+
     return `
-      <div class="history-round-card">
+      <div class="history-round-card" data-round-card>
         <div class="history-round-header" data-round="${rnd.round_id}">
           <span class="history-round-title">Rodada ${rnd.round_number}</span>
-          <span class="history-round-meta">${rnd.target_date ? rnd.target_date.slice(0, 10) : ''}</span>
+          ${periodMeta ? `<span class="history-round-meta">${periodMeta}</span>` : ''}
           <span class="history-round-meta">${meta}</span>
           <span class="history-round-meta" style="font-size:16px;">›</span>
         </div>
@@ -4055,11 +5439,34 @@ async function renderPublicoResultados(container, season) {
 
   container.innerHTML = `
     <div style="padding:0 var(--space-md);">
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px;">
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:8px;">
         ${escapeHtml(season.name)} · ${rounds.length} rodada(s)
       </p>
+      ${catTabsHtml}
       ${html}
     </div>`;
+
+  // Filtro por categoria
+  function applyPubFilter(cat) {
+    container.querySelectorAll('#pub-resultados-tabs .cat-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.filter === cat)
+    );
+    container.querySelectorAll('.history-group-block[data-cat]').forEach(block => {
+      block.style.display = (cat === 'all' || block.dataset.cat === cat) ? '' : 'none';
+    });
+    // Oculta rodadas sem grupos visíveis no filtro atual
+    container.querySelectorAll('.history-round-card[data-round-card]').forEach(card => {
+      if (cat === 'all') { card.style.display = ''; return; }
+      const hasVisible = [...card.querySelectorAll('.history-group-block[data-cat]')]
+        .some(b => b.dataset.cat === cat && b.style.display !== 'none');
+      card.style.display = hasVisible ? '' : 'none';
+    });
+  }
+
+  container.querySelector('#pub-resultados-tabs').addEventListener('click', e => {
+    const btn = e.target.closest('.cat-tab');
+    if (btn) applyPubFilter(btn.dataset.filter);
+  });
 
   // Toggle accordion
   container.querySelectorAll('.history-round-header').forEach(hdr => {
@@ -4104,9 +5511,13 @@ async function renderMesaHistorico(content) {
   }
 
   // Summary stats
-  const totalPts = history.reduce((s, h) => s + (h.my_total ?? 0), 0);
-  const totalWins = history.reduce((s, h) => s + (h.my_sets || []).filter(x => x === 3).length, 0);
-  const firsts = history.filter(h => h.rank_in_group === 1).length;
+  const totalPts   = history.reduce((s, h) => s + (h.my_total ?? 0), 0);
+  const totalSetsW = history.reduce((s, h) => s + (h.my_sets || []).filter(x => x === 3).length, 0);
+  const totalSets  = history.reduce((s, h) => s + (h.my_sets || []).length, 0);
+  const totalGW    = history.reduce((s, h) => s + (h.games_won ?? 0), 0);
+  const totalGL    = history.reduce((s, h) => s + (h.games_lost ?? 0), 0);
+  const firsts     = history.filter(h => h.rank_in_group === 1).length;
+  const winRate    = totalSets > 0 ? Math.round(100 * totalSetsW / totalSets) : 0;
 
   const rankBadge = rank => {
     const cls = rank <= 3 ? `rank-${rank}` : '';
@@ -4115,8 +5526,24 @@ async function renderMesaHistorico(content) {
   };
 
   const cards = history.map(h => {
-    const setsPips = (h.my_sets || []).map(s => `
-      <span class="match-set-pip ${s === 3 ? 'win' : 'loss'}">${s}</span>`).join('');
+    // Placar real por set (novo campo set_scores) ou fallback para pips
+    let scoresHtml;
+    if (h.set_scores && h.set_scores.length) {
+      scoresHtml = h.set_scores.map(s => {
+        const cls = s.wo ? 'wo' : s.won ? 'win' : 'loss';
+        const label = s.wo ? 'WO' : `${s.score_mine}–${s.score_opp}${s.is_super_tiebreak ? ' STB' : ''}`;
+        return `<span class="match-set-score ${cls}">${label}</span>`;
+      }).join('<span style="color:var(--color-text-muted);padding:0 2px;">/</span>');
+      const gamesHtml = (h.games_won !== undefined && h.games_lost !== undefined)
+        ? `<span style="font-size:11px;color:var(--color-text-muted);margin-left:8px;">${h.games_won}G–${h.games_lost}G</span>`
+        : '';
+      scoresHtml = `<div class="match-sets-row">${scoresHtml}${gamesHtml}</div>`;
+    } else {
+      const pips = (h.my_sets || []).map(s =>
+        `<span class="match-set-pip ${s === 3 ? 'win' : 'loss'}">${s}</span>`).join('');
+      scoresHtml = `<div class="match-sets-row">${pips}</div>`;
+    }
+
     const opponents = h.group_members.map(m => escapeHtml(m.nome)).join(', ');
 
     return `
@@ -4125,7 +5552,7 @@ async function renderMesaHistorico(content) {
           <span class="match-round-label">${catLabel(h.cat)} · Rodada ${h.round_number ?? '—'}</span>
           ${rankBadge(h.rank_in_group)}
         </div>
-        <div class="match-sets-row">${setsPips}</div>
+        ${scoresHtml}
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
           <span class="match-opponents">${opponents}</span>
           <span style="font-size:13px;font-weight:700;color:var(--color-primary);">${h.my_total ?? 0}pts</span>
@@ -4136,7 +5563,7 @@ async function renderMesaHistorico(content) {
 
   content.innerHTML = `
     <div style="padding:16px;">
-      <div class="profile-stats-grid" style="margin-bottom:20px;">
+      <div class="profile-stats-grid" style="margin-bottom:4px;">
         <div class="profile-stat-card">
           <div class="profile-stat-value">${history.length}</div>
           <div class="profile-stat-label">Rodadas</div>
@@ -4148,6 +5575,20 @@ async function renderMesaHistorico(content) {
         <div class="profile-stat-card">
           <div class="profile-stat-value">${firsts}</div>
           <div class="profile-stat-label">1º Lugares</div>
+        </div>
+      </div>
+      <div class="profile-stats-grid" style="margin-bottom:20px;">
+        <div class="profile-stat-card">
+          <div class="profile-stat-value">${totalSetsW}/${totalSets}</div>
+          <div class="profile-stat-label">Sets G/J</div>
+        </div>
+        <div class="profile-stat-card">
+          <div class="profile-stat-value">${winRate}%</div>
+          <div class="profile-stat-label">Aproveit.</div>
+        </div>
+        <div class="profile-stat-card">
+          <div class="profile-stat-value">${totalGW > 0 ? (totalGW >= totalGL ? '+' : '') + (totalGW - totalGL) : '—'}</div>
+          <div class="profile-stat-label">Saldo Games</div>
         </div>
       </div>
       ${cards}
@@ -4281,11 +5722,22 @@ async function renderMesaPerfil(content) {
     : `<p style="padding:10px 12px;font-size:13px;color:var(--color-text-muted);">Nenhuma movimentação registrada.</p>`;
 
   const summariesHtml = summaries.length
-    ? summaries.map(s => `
+    ? summaries.map(s => {
+        const fr = s.final_rank;
+        const rankStr = fr ? `${fr.rank}°/${fr.total}` : '—';
+        const rankColor = fr && fr.rank === 1 ? '#F59E0B' : fr && fr.rank <= 3 ? '#22C55E' : 'var(--color-text-muted)';
+        return `
         <div class="season-row">
-          <span>${escapeHtml(s.season_name)} <span style="font-size:11px;color:var(--color-text-muted);">(${s.status})</span></span>
-          <span class="season-pts">${s.total_points}pts · ${s.set_wins}W · ${s.rounds_played} rod.</span>
-        </div>`).join('')
+          <div>
+            <span>${escapeHtml(s.season_name)}</span>
+            <span style="font-size:11px;color:var(--color-text-muted);margin-left:6px;">(${s.status})</span>
+          </div>
+          <div style="text-align:right;">
+            <span class="season-pts">${s.total_points}pts · ${s.set_wins}W · ${s.rounds_played} rod.</span>
+            <div style="font-size:12px;font-weight:700;color:${rankColor};">${rankStr} ${fr ? catLabel(fr.cat) : ''}</div>
+          </div>
+        </div>`;
+      }).join('')
     : `<p style="padding:10px 12px;font-size:13px;color:var(--color-text-muted);">Sem rodadas jogadas ainda.</p>`;
 
   content.innerHTML = `
@@ -4326,6 +5778,40 @@ async function renderMesaPerfil(content) {
         ${historyHtml}
       </div>
 
+      <p class="profile-section-title">Declarar Afastamento</p>
+      <div class="card" style="padding:var(--space-md);">
+        <p style="font-size:12px;color:var(--color-text-muted);margin:0 0 10px;">
+          Use apenas em caso real de lesão ou viagem. O afastamento custa a temporada e abre vaga para reserva.
+        </p>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div class="form-group">
+            <label class="form-label">Tipo</label>
+            <select id="mesa-inj-tipo" class="form-input">
+              <option value="lesao">Lesão</option>
+              <option value="viagem">Viagem</option>
+              <option value="outro">Outro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Data de início</label>
+            <input id="mesa-inj-start" type="date" class="form-input" value="${new Date().toISOString().slice(0,10)}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Dias de afastamento</label>
+            <input id="mesa-inj-days" type="number" class="form-input" min="1" max="365" placeholder="ex: 21">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Observações</label>
+            <input id="mesa-inj-notes" type="text" class="form-input" placeholder="Opcional">
+          </div>
+        </div>
+        <div id="mesa-inj-preview" style="font-size:12px;color:var(--color-text-muted);margin-top:4px;"></div>
+        <button id="btn-mesa-declarar" class="btn btn-primary" style="margin-top:12px;background:#D94040;border-color:#D94040;">
+          Declarar Afastamento
+        </button>
+        <span id="mesa-inj-msg" style="font-size:13px;margin-left:8px;"></span>
+      </div>
+
       <p class="profile-section-title">Alterar PIN</p>
       <div class="card">
         <form id="form-pin" class="pin-form">
@@ -4344,6 +5830,59 @@ async function renderMesaPerfil(content) {
         </form>
       </div>
     </div>`;
+
+  // Preview retorno
+  function updateMesaInjPreview() {
+    const start = content.querySelector('#mesa-inj-start').value;
+    const days  = parseInt(content.querySelector('#mesa-inj-days').value);
+    const el    = content.querySelector('#mesa-inj-preview');
+    if (start && days > 0) {
+      const dt = new Date(start + 'T12:00:00');
+      dt.setDate(dt.getDate() + days);
+      el.textContent = `Retorno previsto: ${dt.toISOString().slice(0, 10)}`;
+    } else {
+      el.textContent = '';
+    }
+  }
+  content.querySelector('#mesa-inj-start').addEventListener('input', updateMesaInjPreview);
+  content.querySelector('#mesa-inj-days').addEventListener('input', updateMesaInjPreview);
+
+  // Declarar afastamento pelo atleta
+  content.querySelector('#btn-mesa-declarar').addEventListener('click', async () => {
+    const tipo  = content.querySelector('#mesa-inj-tipo').value;
+    const start = content.querySelector('#mesa-inj-start').value;
+    const days  = parseInt(content.querySelector('#mesa-inj-days').value);
+    const notes = content.querySelector('#mesa-inj-notes').value;
+    const msg   = content.querySelector('#mesa-inj-msg');
+
+    if (!start || !days) {
+      msg.textContent = 'Preencha data e dias.'; msg.style.color = '#D94040'; return;
+    }
+
+    // Busca temporada ativa para associar
+    let seasons = [];
+    try { seasons = await api('/api/seasons'); } catch (_) {}
+    const activeSeason = seasons.find(s => s.status === 'active');
+    if (!activeSeason) {
+      msg.textContent = 'Sem temporada ativa no momento.'; msg.style.color = '#D94040'; return;
+    }
+
+    confirmModal('Confirmar Afastamento',
+      `Declarar afastamento de ${days} dia(s) a partir de ${start}? Isso custa sua vaga na temporada atual.`,
+      async () => {
+        try {
+          const res = await api('/api/injuries', { method: 'POST', body: {
+            athlete_id: profile.id, season_id: activeSeason.id,
+            tipo, start_date: start, duration_days: days, notes,
+          }});
+          showToast(res.reserva_promoted ? 'Afastamento declarado. Reserva assumiu sua vaga.' : 'Afastamento declarado. Vaga em aberto.');
+          await renderMesaPerfil(content);
+        } catch (err) {
+          msg.textContent = 'Erro: ' + err.message; msg.style.color = '#D94040';
+        }
+      }, 'Confirmar Afastamento'
+    );
+  });
 
   content.querySelector('#form-pin').addEventListener('submit', async e => {
     e.preventDefault();

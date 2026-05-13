@@ -52,6 +52,7 @@ def compute_round_summary(
                 "has_result": result is not None,
                 "result_status": result.get("status") if result else None,
                 "athletes": athletes_with_scores,
+                "sets": result.get("sets", []) if result else [],
             })
 
     return {
@@ -59,7 +60,8 @@ def compute_round_summary(
         "round_number": round_data.get("round_number"),
         "season_id": round_data.get("season_id"),
         "status": round_data.get("status"),
-        "target_date": round_data.get("target_date"),
+        "start_date": round_data.get("start_date"),
+        "end_date": round_data.get("end_date"),
         "groups": group_summaries,
     }
 
@@ -128,6 +130,26 @@ def compute_athlete_match_history(
             if aid != athlete_id
         ]
 
+        # Placar real por set (score_mine / score_opp)
+        my_sets_pts = my_score.get("sets", [])
+        set_scores = []
+        for i, set_def in enumerate(result.get("sets", [])):
+            in_a = athlete_id in set_def.get("team_a", [])
+            s_mine = set_def.get("score_a" if in_a else "score_b", 0)
+            s_opp  = set_def.get("score_b" if in_a else "score_a", 0)
+            pts = my_sets_pts[i] if i < len(my_sets_pts) else 0
+            set_scores.append({
+                "set": set_def.get("set", i + 1),
+                "score_mine": s_mine,
+                "score_opp": s_opp,
+                "won": pts == 3,
+                "wo": pts == 0,
+                "is_super_tiebreak": set_def.get("is_super_tiebreak", False),
+            })
+
+        games_won  = sum(s["score_mine"] for s in set_scores if not s["wo"])
+        games_lost = sum(s["score_opp"]  for s in set_scores if not s["wo"])
+
         rnd = rounds_by_id.get(result.get("round_id") or "", {})
 
         history.append({
@@ -137,6 +159,9 @@ def compute_athlete_match_history(
             "cat": result.get("cat"),
             "target_date": rnd.get("target_date"),
             "my_sets": my_score.get("sets", []),
+            "set_scores": set_scores,
+            "games_won": games_won,
+            "games_lost": games_lost,
             "my_total": my_score.get("total"),
             "rank_in_group": rank,
             "group_size": len(result.get("group", [])),
