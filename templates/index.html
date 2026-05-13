@@ -203,6 +203,7 @@
           <a href="#admin/contestacoes" class="sidebar-link" style="display:flex;align-items:center;">
             ⚠️ Contestações <span class="sidebar-notif-badge" id="contested-badge"></span>
           </a>
+          <a href="#admin/pendencias"   class="sidebar-link">⚡ Pendências</a>
           <a href="#admin/auditoria"    class="sidebar-link">🔍 Auditoria</a>
           <a href="#admin/config"       class="sidebar-link">⚙️ Configurações</a>
         </nav>
@@ -285,6 +286,10 @@
         <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/relatorio'">
           <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
           Relatório
+        </button>
+        <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/pendencias'">
+          <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Pendências
         </button>
         <button class="more-sheet-item" onclick="closeMoreSheet();location.hash='admin/contestacoes'">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>

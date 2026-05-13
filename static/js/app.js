@@ -840,51 +840,78 @@ async function renderPublicoRanking(container, season) {
 async function renderPublicoGrupos(container, season) {
   container.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando grupos…</p>`;
 
-  let rounds = [];
-  try { rounds = await api(`/api/seasons/${season.id}/rounds`); } catch (_) {}
+  let rounds = [], athletes = [];
+  try { [rounds, athletes] = await Promise.all([
+    api(`/api/seasons/${season.id}/rounds`),
+    api('/api/athletes'),
+  ]); } catch (_) {}
 
-  const latest = rounds.sort((a,b) => b.round_number - a.round_number)[0];
-  if (!latest) {
+  rounds.sort((a, b) => b.round_number - a.round_number);
+
+  if (!rounds.length) {
     container.innerHTML = `<div class="empty-state" style="padding:40px 20px;"><p class="empty-state-title">Nenhuma rodada criada</p></div>`;
     return;
   }
 
-  let athletes = [];
-  try { athletes = await api('/api/athletes'); } catch (_) {}
   const byId = Object.fromEntries(athletes.map(a => [a.id, a]));
-
   const catColors = { A: 'var(--color-cat-a)', B: 'var(--color-cat-b)', C: 'var(--color-cat-c)', D: 'var(--color-cat-d)' };
+  let selectedRound = rounds[0];
 
-  let html = `<div style="padding:var(--space-md);">
-    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:var(--space-md);">
-      Rodada ${latest.round_number}${latest.target_date ? ' · ' + latest.target_date : ''}
-    </p>`;
-
-  for (const cat of ['A','B','C','D']) {
-    const groups = latest.groups?.[cat];
-    if (!groups || !groups.length) continue;
-    html += `
-      <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;">
-        <span style="width:3px;height:16px;background:${catColors[cat] || 'var(--color-primary)'};border-radius:2px;flex-shrink:0;"></span>
-        <span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${catColors[cat] || 'var(--color-text-muted)'};">${catLabel(cat)}</span>
-      </div>`;
-    groups.forEach((group, gi) => {
-      const slot = latest.official_slots?.[cat]?.[gi];
-      html += `
-        <div class="card" style="margin-bottom:10px;padding:var(--space-sm) var(--space-md);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <strong style="font-size:13px;color:var(--color-text);">Grupo ${gi+1}</strong>
-            ${slot?.slot ? `<span style="font-size:12px;color:var(--color-text-muted);">⏰ ${slot.slot}</span>` : '<span style="font-size:11px;color:var(--color-text-muted);">Horário pendente</span>'}
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;">
-            ${group.map(aid => `<a href="#publico/atleta/${aid}" class="athlete-chip" style="text-decoration:none;color:inherit;">${escapeHtml(byId[aid]?.nome || aid)}</a>`).join('')}
-          </div>
+  function groupsHtml(rnd) {
+    const hasGroups = ['A','B','C','D'].some(cat => rnd.groups?.[cat]?.length);
+    if (!hasGroups) return `<p style="font-size:13px;color:var(--color-text-muted);padding:16px 0;">Grupos ainda não gerados para esta rodada.</p>`;
+    let h = '';
+    for (const cat of ['A','B','C','D']) {
+      const groups = rnd.groups?.[cat];
+      if (!groups?.length) continue;
+      h += `
+        <div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px;">
+          <span style="width:3px;height:16px;background:${catColors[cat]};border-radius:2px;flex-shrink:0;"></span>
+          <span style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${catColors[cat]};">${catLabel(cat)}</span>
         </div>`;
-    });
+      groups.forEach((group, gi) => {
+        const slot = rnd.official_slots?.[cat]?.[gi];
+        h += `
+          <div class="card" style="margin-bottom:10px;padding:var(--space-sm) var(--space-md);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <strong style="font-size:13px;">Grupo ${gi + 1}</strong>
+              ${slot?.slot ? `<span style="font-size:12px;color:var(--color-text-muted);">⏰ ${slot.slot}</span>` : '<span style="font-size:11px;color:var(--color-text-muted);">Horário pendente</span>'}
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;">
+              ${group.map(aid => `<a href="#publico/atleta/${aid}" class="athlete-chip" style="text-decoration:none;color:inherit;">${escapeHtml(byId[aid]?.nome || aid)}</a>`).join('')}
+            </div>
+          </div>`;
+      });
+    }
+    return h;
   }
 
-  html += `</div>`;
-  container.innerHTML = html;
+  function areaHtml(rnd) {
+    const parts = [`Rodada ${rnd.round_number}`];
+    if (rnd.target_date) parts.push(rnd.target_date);
+    if (rnd.status === 'closed') parts.push('encerrada');
+    return `<p style="font-size:12px;color:var(--color-text-muted);margin-bottom:var(--space-md);">${parts.join(' · ')}</p>${groupsHtml(rnd)}`;
+  }
+
+  const pillsHtml = rounds.map(r => `
+    <button class="grupos-round-pill${r.id === selectedRound.id ? ' grupos-round-pill-active' : ''}" data-round-id="${r.id}">
+      Rod. ${r.round_number}
+    </button>`).join('');
+
+  container.innerHTML = `
+    <div style="padding:var(--space-md);">
+      <div class="grupos-round-bar">${pillsHtml}</div>
+      <div id="grupos-area">${areaHtml(selectedRound)}</div>
+    </div>`;
+
+  container.querySelectorAll('.grupos-round-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedRound = rounds.find(r => r.id === btn.dataset.roundId) || selectedRound;
+      container.querySelectorAll('.grupos-round-pill').forEach(b =>
+        b.classList.toggle('grupos-round-pill-active', b.dataset.roundId === selectedRound.id));
+      container.querySelector('#grupos-area').innerHTML = areaHtml(selectedRound);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -967,6 +994,9 @@ async function renderAdmin(sub) {
       break;
     case 'config':
       await renderAdminConfig(content);
+      break;
+    case 'pendencias':
+      await renderAdminPendencias(content);
       break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela <code>#admin/${sub}</code> disponível em sprint futuro.</p>`;
@@ -6587,23 +6617,25 @@ async function renderMesaPerfil(content) {
 // Sprint 12: Admin — Relatório de Temporada
 // ---------------------------------------------------------------------------
 
-async function renderAdminRelatorio(content) {
+async function renderAdminRelatorio(content, selectedSeasonId = null) {
   renderSkeletonCards(content, 6);
 
   let seasons = [];
   try { seasons = await api('/api/seasons'); } catch (_) {}
-  const activeSeason = seasons.find(s => s.status === 'active') || seasons[0];
 
-  if (!activeSeason) {
+  if (!seasons.length) {
     renderErrorState(content, 'Nenhuma temporada disponível para gerar relatório.');
     return;
   }
 
+  const defaultSeason = seasons.find(s => s.status === 'active') || seasons[0];
+  const selectedSeason = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || defaultSeason;
+
   let report;
   try {
-    report = await api(`/api/seasons/${activeSeason.id}/report`);
+    report = await api(`/api/seasons/${selectedSeason.id}/report`);
   } catch (err) {
-    renderErrorState(content, err.message, () => renderAdminRelatorio(content));
+    renderErrorState(content, err.message, () => renderAdminRelatorio(content, selectedSeasonId));
     return;
   }
 
@@ -6641,12 +6673,18 @@ async function renderAdminRelatorio(content) {
       <td class="num">${e.set_wins}</td>
     </tr>`).join('');
 
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="relatorio-season-sel" class="input" style="font-size:13px;max-width:220px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === selectedSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
+
   content.innerHTML = `
     <div class="section-header">
       <div>
         <h1 class="section-title">Relatório de Temporada</h1>
-        <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
+        <p class="section-subtitle">${escapeHtml(selectedSeason.name)}</p>
       </div>
+      ${seasonSelectHtml}
     </div>
 
     <div class="report-kpi-grid">
@@ -6686,6 +6724,10 @@ async function renderAdminRelatorio(content) {
         </table>
       </div>
     </div>`;
+
+  content.querySelector('#relatorio-season-sel')?.addEventListener('change', e => {
+    renderAdminRelatorio(content, e.target.value);
+  });
 }
 
 
@@ -7111,4 +7153,142 @@ function renderPublicoBusca(container) {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => doSearch(input.value.trim()), 350);
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Sprint 18: Admin — Painel de Pendências
+// ---------------------------------------------------------------------------
+
+async function renderAdminPendencias(content) {
+  renderSkeletonCards(content, 4);
+
+  let athletes = [], contestedData = {}, stats = {};
+  try {
+    [athletes, contestedData, stats] = await Promise.all([
+      api('/api/athletes'),
+      api('/api/admin/contested'),
+      api('/api/admin/stats'),
+    ]);
+  } catch (_) {}
+
+  const pendingAthletes = athletes.filter(a => !a.admin_confirmed);
+  const contestedCount  = contestedData.count || 0;
+  const rp              = stats.active_round_progress;
+
+  // Overdue open rounds: status open, has target_date, target_date < today
+  const today = new Date().toISOString().slice(0, 10);
+  let overdueRounds = [];
+  if (stats.active_season_id) {
+    try {
+      const allRounds = await api(`/api/seasons/${stats.active_season_id}/rounds`);
+      overdueRounds = allRounds.filter(r =>
+        r.status === 'open' && r.target_date && r.target_date < today);
+    } catch (_) {}
+  }
+
+  const totalIssues = pendingAthletes.length + contestedCount +
+                      (rp ? rp.pending_confirmation : 0) + overdueRounds.length;
+
+  function statusChip(ok) {
+    return ok
+      ? `<span class="pend-chip pend-chip-ok">✓ OK</span>`
+      : `<span class="pend-chip pend-chip-warn">⚠ Ação</span>`;
+  }
+
+  function pendCard(icon, title, count, desc, link, linkLabel) {
+    const ok = count === 0;
+    return `
+      <div class="card pend-card${ok ? ' pend-card-ok' : ''}">
+        <div class="pend-card-top">
+          <span class="pend-card-icon">${icon}</span>
+          <div class="pend-card-info">
+            <div class="pend-card-title">${title}</div>
+            <div class="pend-card-desc">${desc}</div>
+          </div>
+          ${statusChip(ok)}
+        </div>
+        ${!ok && link ? `<div class="pend-card-action"><a href="${link}" class="btn btn-sm btn-primary">${linkLabel}</a></div>` : ''}
+      </div>`;
+  }
+
+  // Card de atletas pendentes com lista compacta de nomes
+  const pendAthCard = (() => {
+    const ok = pendingAthletes.length === 0;
+    const names = pendingAthletes.slice(0, 5).map(a => escapeHtml(a.nome)).join(', ');
+    const extra = pendingAthletes.length > 5 ? ` +${pendingAthletes.length - 5}` : '';
+    return `
+      <div class="card pend-card${ok ? ' pend-card-ok' : ''}">
+        <div class="pend-card-top">
+          <span class="pend-card-icon">👤</span>
+          <div class="pend-card-info">
+            <div class="pend-card-title">Atletas pendentes</div>
+            <div class="pend-card-desc">${ok ? 'Todos confirmados.' : `${pendingAthletes.length} aguardando confirmação admin`}</div>
+            ${!ok ? `<div class="pend-card-names">${names}${extra}</div>` : ''}
+          </div>
+          ${statusChip(ok)}
+        </div>
+        ${!ok ? `<div class="pend-card-action"><a href="#admin/atletas" class="btn btn-sm btn-primary">Ver atletas</a></div>` : ''}
+      </div>`;
+  })();
+
+  // Card de rodada ativa
+  const roundCard = rp ? (() => {
+    const missing = rp.pending_confirmation + rp.contested + rp.not_launched;
+    const ok = missing === 0;
+    return `
+      <div class="card pend-card${ok ? ' pend-card-ok' : ''}">
+        <div class="pend-card-top">
+          <span class="pend-card-icon">🎾</span>
+          <div class="pend-card-info">
+            <div class="pend-card-title">Rodada ${rp.round_number} — resultados</div>
+            <div class="pend-card-desc">${rp.confirmed}/${rp.total_groups} grupos confirmados${rp.is_overdue ? ' · <strong style="color:var(--color-danger);">vencida</strong>' : ''}</div>
+            ${missing > 0 ? `<div class="pend-card-names" style="color:var(--color-text-muted);">
+              ${rp.pending_confirmation > 0 ? `${rp.pending_confirmation} pendente(s)` : ''}
+              ${rp.contested > 0 ? ` · ${rp.contested} contestado(s)` : ''}
+              ${rp.not_launched > 0 ? ` · ${rp.not_launched} sem lançar` : ''}
+            </div>` : ''}
+          </div>
+          ${statusChip(ok)}
+        </div>
+        ${!ok ? `<div class="pend-card-action"><a href="#admin/resultados" class="btn btn-sm btn-primary">Ver resultados</a></div>` : ''}
+      </div>`;
+  })() : '';
+
+  // Card de rodadas vencidas
+  const overdueCard = overdueRounds.length > 0 ? `
+    <div class="card pend-card">
+      <div class="pend-card-top">
+        <span class="pend-card-icon">⏰</span>
+        <div class="pend-card-info">
+          <div class="pend-card-title">Rodadas vencidas</div>
+          <div class="pend-card-desc">${overdueRounds.length} rodada(s) abertas com prazo expirado</div>
+          <div class="pend-card-names">${overdueRounds.map(r => `Rod. ${r.round_number} (${r.target_date})`).join(' · ')}</div>
+        </div>
+        <span class="pend-chip pend-chip-warn">⚠ Ação</span>
+      </div>
+      <div class="pend-card-action"><a href="#admin/rodada" class="btn btn-sm btn-primary">Ver rodadas</a></div>
+    </div>` : '';
+
+  content.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">Painel de Pendências</h1>
+        <p class="section-subtitle">${totalIssues === 0 ? 'Tudo em ordem ✓' : `${totalIssues} item(s) requerem atenção`}</p>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="renderAdminPendencias(document.querySelector('#admin-content'))">↻ Atualizar</button>
+    </div>
+
+    ${totalIssues === 0 ? `
+      <div style="text-align:center;padding:48px 20px;">
+        <div style="font-size:48px;margin-bottom:12px;">✅</div>
+        <p style="color:var(--color-text-muted);font-size:14px;">Nenhuma pendência encontrada.</p>
+      </div>` : ''}
+
+    ${pendAthCard}
+    ${pendCard('⚠️', 'Resultados contestados', contestedCount,
+        contestedCount === 0 ? 'Nenhuma contestação aberta.' : `${contestedCount} resultado(s) aguardando decisão`,
+        '#admin/contestacoes', 'Ver contestações')}
+    ${roundCard}
+    ${overdueCard}`;
 }
