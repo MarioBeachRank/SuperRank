@@ -3757,8 +3757,8 @@ async function renderMesaHome(content, ctx) {
         </a>
         <a href="#mesa/grupo" class="card" style="display:block;text-align:center;text-decoration:none;">
           <p style="font-size:20px;margin-bottom:4px;">👥</p>
-          <p style="font-size:13px;font-weight:600;">Meu Grupo</p>
-          ${group ? `<p style="font-size:11px;color:var(--color-text-muted);">Cat ${group.category} · Grupo ${group.group_index + 1}</p>` : ''}
+          <p style="font-size:13px;font-weight:600;">Grupos</p>
+          ${group ? `<p style="font-size:11px;color:var(--color-text-muted);">Meu grupo: Cat ${group.category} · G${group.group_index + 1}</p>` : ''}
         </a>
         ${(() => {
           const rs = ctx.result_status || 'none';
@@ -4412,12 +4412,12 @@ function renderMesaSlots(content, ctx) {
 // ---------------------------------------------------------------------------
 
 async function renderMesaGrupo(content, ctx) {
-  if (!ctx || !ctx.group) {
+  if (!ctx || !ctx.round) {
     content.innerHTML = `
       <div class="empty-state" style="padding:40px 20px;">
         <div class="empty-state-icon">👥</div>
-        <p class="empty-state-title">Grupo não encontrado</p>
-        <p>Você não está em nenhum grupo na rodada atual.</p>
+        <p class="empty-state-title">Sem rodada ativa</p>
+        <p>Não há rodada em andamento no momento.</p>
       </div>`;
     return;
   }
@@ -4425,90 +4425,86 @@ async function renderMesaGrupo(content, ctx) {
   const { athlete, group, official_slot, round, confirmed_result } = ctx;
   const slotsStatus = ctx.group_slots_status || [];
   const slotResolved = official_slot && official_slot.status === 'resolved';
-  const slotCard = slotResolved
-    ? `<div class="official-slot-card">
-         <p class="official-slot-label">Horário Oficial</p>
-         <p class="official-slot-time">${official_slot.slot}</p>
-         <p class="official-slot-location">📍 ${escapeHtml(group.location)}</p>
-         ${round?.target_date ? `<p style="opacity:.75;font-size:12px;margin-top:4px;">${round.target_date}</p>` : ''}
-       </div>`
-    : `<div class="pending-slot-card">
-         <p style="font-size:24px;margin-bottom:8px;">🕐</p>
-         <p style="font-weight:600;">
-           ${official_slot?.status === 'needs_mediation' ? 'Aguardando mediação do admin' : 'Aguardando definição de horário'}
-         </p>
-         <p style="font-size:13px;margin-top:4px;">Marque seus slots em <a href="#mesa/slots">Marcar Slots</a></p>
-       </div>`;
+
+  // Render skeleton immediately, then fill async sections
+  const myGroupHtml = group ? (() => {
+    const slotCard = slotResolved
+      ? `<div class="official-slot-card">
+           <p class="official-slot-label">Horário Oficial</p>
+           <p class="official-slot-time">${official_slot.slot}</p>
+           <p class="official-slot-location">📍 ${escapeHtml(group.location)}</p>
+         </div>`
+      : `<div class="pending-slot-card">
+           <p style="font-size:24px;margin-bottom:8px;">🕐</p>
+           <p style="font-weight:600;">${official_slot?.status === 'needs_mediation' ? 'Aguardando mediação do admin' : 'Aguardando definição de horário'}</p>
+           <p style="font-size:13px;margin-top:4px;">Marque seus slots em <a href="#mesa/slots">Marcar Slots</a></p>
+         </div>`;
+
+    const membersHtml = group.names.map((nome, i) => {
+      const aid = group.athlete_ids[i];
+      const isMe = aid === athlete.id;
+      const hasWo = official_slot?.wo_athlete_ids?.includes(aid);
+      const memberStatus = slotsStatus.find(s => s.athlete_id === aid);
+      return `
+        <div class="group-member-row${isMe ? ' is-me' : ''}">
+          <span class="slot-status-dot ${memberStatus?.has_slots ? 'done' : 'pending'}" title="${memberStatus?.has_slots ? 'Slots marcados' : 'Sem slots'}"></span>
+          <span class="group-member-name">${escapeHtml(nome)}</span>
+          ${isMe ? '<span class="badge badge-ativo">Eu</span>' : ''}
+          ${hasWo ? '<span class="badge badge-inativo">WO</span>' : ''}
+          ${memberStatus?.telefone ? waBtn(memberStatus.telefone) : ''}
+        </div>`;
+    }).join('');
+
+    const setsHtml = (group.sets_named || []).map(s => {
+      let scoreHtml = '';
+      if (confirmed_result?.sets) {
+        const setDef = confirmed_result.sets.find(sd => sd.set === s.set);
+        if (setDef) {
+          scoreHtml = `<span class="set-score-result" style="font-size:13px;font-weight:700;color:var(--color-primary);margin-left:auto;">
+            ${setDef.score_a}<span style="color:var(--color-text-muted);">–</span>${setDef.score_b}${setDef.is_super_tiebreak ? ' <span style="font-size:10px;">STB</span>' : ''}
+          </span>`;
+        }
+      }
+      return `<div class="set-row" style="padding:10px 16px;border-bottom:var(--border);">
+        <span class="set-label">Set ${s.set}</span>
+        <span class="set-team">${s.team_a.map(escapeHtml).join(' + ')}</span>
+        <span class="set-vs">vs</span>
+        <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
+        ${scoreHtml}
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="card" style="border-left:3px solid var(--color-primary);padding:0;overflow:hidden;margin-bottom:20px;">
+        <div style="padding:12px 16px;border-bottom:var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <span style="font-size:13px;font-weight:700;">${catLabel(group.category)} · Grupo ${group.group_index + 1}</span>
+          </div>
+          <span class="badge badge-ativo">Meu Grupo</span>
+        </div>
+        <div style="padding:12px 16px;">
+          ${slotCard}
+          <button id="btn-copy-grupo" class="btn btn-ghost btn-sm" style="width:100%;margin:8px 0 12px;">📋 Copiar info do grupo</button>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">Atletas</p>
+          <div class="group-members-list" style="margin-bottom:16px;">${membersHtml}</div>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">Sets (Art. 7)</p>
+          <div style="border:var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;">${setsHtml}</div>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:8px;">Mensagens Rápidas</p>
+          <div class="quick-msg-grid" id="quick-msg-btns"></div>
+          <div id="guest-request-section"></div>
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin:16px 0 8px;">Confronto Direto (H2H)</p>
+          <div id="h2h-grupo-section"><p class="placeholder-text" style="font-size:13px;">Carregando H2H…</p></div>
+        </div>
+      </div>`;
+  })() : '';
 
   content.innerHTML = `
     <div class="grupo-screen">
-      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Meu Grupo</h2>
-      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
-        ${catLabel(group.category)} · Grupo ${group.group_index + 1} · Rodada ${round?.round_number ?? '—'}
-      </p>
-
-      ${slotCard}
-
-      <button id="btn-copy-grupo" class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:16px;">
-        📋 Copiar info do grupo
-      </button>
-
-      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-         color:var(--color-text-muted);margin-bottom:8px;">Atletas do Grupo</p>
-      <div class="group-members-list" style="margin-bottom:20px;">
-        ${group.names.map((nome, i) => {
-          const aid = group.athlete_ids[i];
-          const isMe = aid === athlete.id;
-          const hasWo = official_slot?.wo_athlete_ids?.includes(aid);
-          const memberStatus = slotsStatus.find(s => s.athlete_id === aid);
-          const dotClass = memberStatus?.has_slots ? 'done' : 'pending';
-          return `
-            <div class="group-member-row${isMe ? ' is-me' : ''}">
-              <span class="slot-status-dot ${dotClass}" title="${memberStatus?.has_slots ? 'Slots marcados' : 'Sem slots'}"></span>
-              <span class="group-member-name">${escapeHtml(nome)}</span>
-              ${isMe ? '<span class="badge badge-ativo">Eu</span>' : ''}
-              ${hasWo ? '<span class="badge badge-inativo">WO</span>' : ''}
-              ${memberStatus?.telefone ? waBtn(memberStatus.telefone) : ''}
-            </div>`;
-        }).join('')}
-      </div>
-
-      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-         color:var(--color-text-muted);margin-bottom:8px;">Sets (Art. 7)</p>
-      <div class="card" style="padding:0;overflow:hidden;">
-        ${(group.sets_named || []).map(s => {
-          // Placar real do resultado confirmado
-          let scoreHtml = '';
-          if (confirmed_result && confirmed_result.sets) {
-            const setDef = confirmed_result.sets.find(sd => sd.set === s.set);
-            if (setDef) {
-              const won = setDef.score_a > setDef.score_b;
-              scoreHtml = `<span class="set-score-result" style="font-size:13px;font-weight:700;color:var(--color-primary);margin-left:auto;">
-                ${setDef.score_a}<span style="color:var(--color-text-muted);">–</span>${setDef.score_b}${setDef.is_super_tiebreak ? ' <span style="font-size:10px;">STB</span>' : ''}
-              </span>`;
-            }
-          }
-          return `
-          <div class="set-row" style="padding:10px 16px;border-bottom:var(--border);">
-            <span class="set-label">Set ${s.set}</span>
-            <span class="set-team">${s.team_a.map(escapeHtml).join(' + ')}</span>
-            <span class="set-vs">vs</span>
-            <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
-            ${scoreHtml}
-          </div>`;
-        }).join('')}
-      </div>
-
-      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-         color:var(--color-text-muted);margin:20px 0 8px;">Mensagens Rápidas</p>
-      <div class="quick-msg-grid" id="quick-msg-btns"></div>
-
-      <div id="guest-request-section"></div>
-
-      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-         color:var(--color-text-muted);margin:24px 0 8px;">Confronto Direto (H2H)</p>
-      <div id="h2h-grupo-section">
-        <p class="placeholder-text" style="font-size:13px;">Carregando H2H…</p>
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Grupos</h2>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">Rodada ${round?.round_number ?? '—'}</p>
+      ${myGroupHtml}
+      <div id="todos-grupos-section">
+        <p class="placeholder-text" style="font-size:13px;">Carregando grupos…</p>
       </div>
     </div>`;
 
@@ -4637,7 +4633,7 @@ async function renderMesaGrupo(content, ctx) {
 
   // Pending guest request for this group?
   const grSection = content.querySelector('#guest-request-section');
-  if (grSection && ctx.round && group.category !== undefined) {
+  if (grSection && ctx.round && group?.category !== undefined) {
     try {
       const grs = await api(`/api/guest-requests?round_id=${ctx.round.id}&status=pending`);
       const myGr = grs.find(g => g.cat === group.category && g.group_idx === group.group_index);
@@ -4645,6 +4641,104 @@ async function renderMesaGrupo(content, ctx) {
         _renderMesaGuestRequest(grSection, myGr, athlete.id);
       }
     } catch (_) { /* not critical */ }
+  }
+
+  // ── Todos os grupos da rodada ──────────────────────────────────────────────
+  const todosSection = content.querySelector('#todos-grupos-section');
+  if (!todosSection) return;
+
+  try {
+    const [rndData, allResults] = await Promise.all([
+      api(`/api/rounds/${round.id}`),
+      api(`/api/rounds/${round.id}/results`).catch(() => []),
+    ]);
+
+    const groupsNamed   = rndData.groups_named   || {};
+    const groupsSetsNamed = rndData.groups_sets_named || {};
+    const officialSlots = rndData.official_slots  || {};
+    const myGroupCat    = group?.category;
+    const myGroupIdx    = group?.group_index ?? -1;
+    const cats = ['A', 'B', 'C', 'D'].filter(c => groupsNamed[c]?.length);
+
+    const RESULT_STATUS = {
+      confirmed:     { label: 'Confirmado',  cls: 'badge-ativo'    },
+      auto_confirmed:{ label: 'Confirmado',  cls: 'badge-ativo'    },
+      admin_override:{ label: 'Admin',       cls: 'badge-ativo'    },
+      pending_confirmation: { label: 'Aguardando confirmação', cls: 'badge-inativo' },
+      contested:     { label: 'Contestado',  cls: 'badge-pending'  },
+    };
+
+    function slotHtml(slotObj) {
+      if (!slotObj || slotObj.status !== 'resolved' || !slotObj.slot) {
+        const msg = slotObj?.status === 'needs_mediation' ? 'Aguardando mediação' : 'Horário não definido';
+        return `<p style="font-size:12px;color:var(--color-text-muted);margin:4px 0 8px;">🕐 ${msg}</p>`;
+      }
+      return `<p style="font-size:13px;font-weight:700;color:var(--color-primary);margin:4px 0 8px;">⏰ ${escapeHtml(slotObj.slot)}</p>`;
+    }
+
+    function resultHtml(result) {
+      if (!result) return `<p style="font-size:12px;color:var(--color-text-muted);margin:4px 0 0;">Sem resultado lançado</p>`;
+      const badge = RESULT_STATUS[result.status] || { label: result.status, cls: 'badge-inativo' };
+      const scoresHtml = Object.entries(result.scores || {}).map(([aid, sc]) => {
+        const nome = result.group_named?.[result.group?.indexOf(aid)] || aid;
+        return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;">
+          <span>${escapeHtml(nome)}</span>
+          <span style="font-weight:700;color:var(--color-primary);">${sc.total ?? 0} pts</span>
+        </div>`;
+      }).join('');
+      return `
+        <div style="margin-top:6px;">
+          <span class="badge ${badge.cls}" style="font-size:10px;margin-bottom:6px;">${badge.label}</span>
+          ${scoresHtml}
+        </div>`;
+    }
+
+    let html = '';
+    for (const cat of cats) {
+      const groups = groupsNamed[cat] || [];
+      const setsPerGroup = groupsSetsNamed[cat] || [];
+      const slots = officialSlots[cat] || [];
+
+      html += `<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+        color:var(--color-text-muted);margin:0 0 10px;">${catLabel(cat)}</p>`;
+
+      for (let gi = 0; gi < groups.length; gi++) {
+        const isMyGroup = cat === myGroupCat && gi === myGroupIdx;
+        if (isMyGroup) continue; // already shown at top
+
+        const names = groups[gi] || [];
+        const sets  = setsPerGroup[gi] || [];
+        const slot  = slots[gi] || null;
+        const result = allResults.find(r => r.cat === cat && r.group_idx === gi) || null;
+
+        const setsRows = sets.map(s =>
+          `<div style="font-size:12px;color:var(--color-text-muted);padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+            <span style="color:var(--color-text-muted);font-size:10px;">Set ${s.set}</span>
+            <span style="margin-left:6px;">${s.team_a.map(escapeHtml).join(' + ')} <span style="opacity:.5;">vs</span> ${s.team_b.map(escapeHtml).join(' + ')}</span>
+          </div>`
+        ).join('');
+
+        html += `
+          <div class="card" style="padding:12px 16px;margin-bottom:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <span style="font-size:13px;font-weight:700;">Grupo ${gi + 1}</span>
+            </div>
+            <div style="margin-bottom:8px;">
+              ${names.map(n => `<span style="display:inline-block;font-size:13px;margin-right:8px;margin-bottom:2px;">${escapeHtml(n)}</span>`).join('')}
+            </div>
+            ${sets.length ? `<div style="margin-bottom:8px;">${setsRows}</div>` : ''}
+            ${slotHtml(slot)}
+            ${resultHtml(result)}
+          </div>`;
+      }
+    }
+
+    todosSection.innerHTML = `
+      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--color-text-muted);margin:4px 0 12px;">Demais Grupos — Rodada ${round.round_number}</p>
+      ${html || '<p style="font-size:13px;color:var(--color-text-muted);">Nenhum outro grupo nesta rodada.</p>'}`;
+  } catch (e) {
+    todosSection.innerHTML = `<p style="font-size:13px;color:var(--color-text-muted);">Erro ao carregar grupos.</p>`;
   }
 }
 
