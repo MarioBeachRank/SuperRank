@@ -3409,6 +3409,8 @@ def admin_settings_route():
         s["payment_amount"] = float(body["payment_amount"] or 0)
     if "payment_due_day" in body:
         s["payment_due_day"] = int(body["payment_due_day"] or 10)
+    if "payments_enabled" in body:
+        s["payments_enabled"] = bool(body["payments_enabled"])
     write_settings(s)
     return jsonify(s)
 
@@ -4352,13 +4354,14 @@ def mesa_payment_status():
                             p.get("athlete_id") == athlete_id), None)
     settings     = read_settings()
     return jsonify({
-        "season_id":       active["id"],
-        "season_name":     active.get("name", ""),
-        "paid":            payment is not None,
-        "paid_at":         payment.get("paid_at") if payment else None,
-        "amount":          payment.get("amount", 0) if payment else 0,
-        "payment_amount":  float(settings.get("payment_amount", 0) or 0),
-        "payment_due_day": int(settings.get("payment_due_day", 10) or 10),
+        "season_id":        active["id"],
+        "season_name":      active.get("name", ""),
+        "paid":             payment is not None,
+        "paid_at":          payment.get("paid_at") if payment else None,
+        "amount":           payment.get("amount", 0) if payment else 0,
+        "payment_amount":   float(settings.get("payment_amount", 0) or 0),
+        "payment_due_day":  int(settings.get("payment_due_day", 10) or 10),
+        "payments_enabled": bool(settings.get("payments_enabled", True)),
     })
 
 

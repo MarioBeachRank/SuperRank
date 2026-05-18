@@ -3527,7 +3527,7 @@ async function renderMesaHome(content, ctx) {
   let pendencias = [];
   if (round && !hasSlots) pendencias.push({ icon: '⏰', text: 'Marcar slots de disponibilidade', link: '#mesa/slots', urgent: true });
   if (pending_result) pendencias.push({ icon: '📋', text: 'Confirmar resultado do grupo', link: '#mesa/resultado', urgent: true });
-  if (paymentStatus?.season_id && !paymentStatus.paid && paymentStatus.payment_amount > 0)
+  if (paymentStatus?.payments_enabled !== false && paymentStatus?.season_id && !paymentStatus.paid && paymentStatus.payment_amount > 0)
     pendencias.push({ icon: '💳', text: 'Pagamento da temporada pendente', link: '#mesa/pagamento', urgent: true });
   if (group && slotResolved) pendencias.push({ icon: '✅', text: `Horário definido: ${official_slot.slot}`, link: '#mesa/grupo', urgent: false });
   if (group && !slotResolved && hasSlots) pendencias.push({ icon: '🕐', text: 'Aguardando horário oficial do grupo', link: '#mesa/grupo', urgent: false });
@@ -8552,7 +8552,20 @@ async function renderAdminConfig(content) {
       <hr style="border:none;border-top:1px solid var(--color-border);margin:20px 0;">
 
       <p class="config-section-label">💳 Pagamentos</p>
-      ${field('cfg-pay-amount',   'Mensalidade (R$)',  settings.payment_amount  ?? '',  'Valor cobrado por temporada · 0 = sem cobrança', 'number', 'decimal')}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:12px 16px;background:var(--color-surface);border:var(--border);border-radius:8px;">
+        <div>
+          <p style="font-size:13px;font-weight:600;margin:0;">Cobranças ativas</p>
+          <p style="font-size:12px;color:var(--color-text-muted);margin:2px 0 0;">Exibe status de pagamento para os atletas</p>
+        </div>
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;">
+          <input type="checkbox" id="cfg-payments-enabled" style="opacity:0;width:0;height:0;"
+            ${settings.payments_enabled !== false ? 'checked' : ''}>
+          <span id="cfg-payments-slider" style="position:absolute;cursor:pointer;inset:0;background:${settings.payments_enabled !== false ? 'var(--color-primary)' : 'rgba(255,255,255,.15)'};border-radius:24px;transition:.2s;">
+            <span style="position:absolute;height:18px;width:18px;left:${settings.payments_enabled !== false ? '23px' : '3px'};bottom:3px;background:#fff;border-radius:50%;transition:.2s;"></span>
+          </span>
+        </label>
+      </div>
+      ${field('cfg-pay-amount',   'Mensalidade (R$)',  settings.payment_amount  ?? '',  'Valor cobrado por temporada', 'number', 'decimal')}
       ${field('cfg-pay-due-day',  'Vencimento (dia)',  settings.payment_due_day ?? '10', 'Dia do mês limite para pagamento (1–28)', 'number', 'numeric')}
 
       <div style="display:flex;gap:10px;margin-top:20px;align-items:center;">
@@ -8575,8 +8588,9 @@ async function renderAdminConfig(content) {
       court_location:   content.querySelector('#cfg-location').value.trim(),
       app_url:          content.querySelector('#cfg-app-url').value.trim(),
       admin_whatsapp:   localDigits ? countryCode + localDigits : '',
-      payment_amount:   parseFloat(content.querySelector('#cfg-pay-amount')?.value || '0') || 0,
-      payment_due_day:  parseInt(content.querySelector('#cfg-pay-due-day')?.value || '10', 10) || 10,
+      payment_amount:    parseFloat(content.querySelector('#cfg-pay-amount')?.value || '0') || 0,
+      payment_due_day:   parseInt(content.querySelector('#cfg-pay-due-day')?.value || '10', 10) || 10,
+      payments_enabled:  content.querySelector('#cfg-payments-enabled')?.checked ?? true,
     };
     try {
       await api('/api/admin/settings', { method: 'PUT', body });
@@ -8588,6 +8602,17 @@ async function renderAdminConfig(content) {
       fb.style.color = '#D94040';
     }
     btn.disabled = false; btn.textContent = 'Salvar configurações';
+  });
+
+  // Animar toggle de cobranças visualmente
+  content.querySelector('#cfg-payments-enabled')?.addEventListener('change', e => {
+    const on = e.target.checked;
+    const slider = content.querySelector('#cfg-payments-slider');
+    if (slider) {
+      slider.style.background = on ? 'var(--color-primary)' : 'rgba(255,255,255,.15)';
+      const knob = slider.querySelector('span');
+      if (knob) knob.style.left = on ? '23px' : '3px';
+    }
   });
 }
 
@@ -9459,6 +9484,19 @@ async function renderMesaPagamento(content) {
     status = await api('/api/mesa/payment-status');
   } catch (e) {
     renderErrorState(content, e.message, () => renderMesaPagamento(content));
+    return;
+  }
+
+  if (status.payments_enabled === false) {
+    content.innerHTML = `
+      <div style="padding:var(--space-md);">
+        <h2 class="section-title" style="font-size:18px;">Pagamento</h2>
+        <div class="empty-state" style="padding:40px 0;">
+          <div class="empty-state-icon">💳</div>
+          <p class="empty-state-title">Cobranças não habilitadas</p>
+          <p style="font-size:13px;color:var(--color-text-muted);">O clube não está realizando cobranças neste momento.</p>
+        </div>
+      </div>`;
     return;
   }
 
