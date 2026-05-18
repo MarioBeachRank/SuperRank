@@ -4693,36 +4693,26 @@ async function renderMesaGrupo(content, ctx) {
         </div>`;
     }
 
-    let html = '';
-    for (const cat of cats) {
+    function buildGroupsHtml(cat, skipMyGroup) {
       const groups = groupsNamed[cat] || [];
       const setsPerGroup = groupsSetsNamed[cat] || [];
       const slots = officialSlots[cat] || [];
-
-      html += `<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-        color:var(--color-text-muted);margin:0 0 10px;">${catLabel(cat)}</p>`;
-
+      let html = '';
       for (let gi = 0; gi < groups.length; gi++) {
-        const isMyGroup = cat === myGroupCat && gi === myGroupIdx;
-        if (isMyGroup) continue; // already shown at top
-
-        const names = groups[gi] || [];
-        const sets  = setsPerGroup[gi] || [];
-        const slot  = slots[gi] || null;
+        if (skipMyGroup && cat === myGroupCat && gi === myGroupIdx) continue;
+        const names  = groups[gi] || [];
+        const sets   = setsPerGroup[gi] || [];
+        const slot   = slots[gi] || null;
         const result = allResults.find(r => r.cat === cat && r.group_idx === gi) || null;
-
         const setsRows = sets.map(s =>
           `<div style="font-size:12px;color:var(--color-text-muted);padding:3px 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-            <span style="color:var(--color-text-muted);font-size:10px;">Set ${s.set}</span>
+            <span style="font-size:10px;">Set ${s.set}</span>
             <span style="margin-left:6px;">${s.team_a.map(escapeHtml).join(' + ')} <span style="opacity:.5;">vs</span> ${s.team_b.map(escapeHtml).join(' + ')}</span>
           </div>`
         ).join('');
-
         html += `
           <div class="card" style="padding:12px 16px;margin-bottom:10px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-              <span style="font-size:13px;font-weight:700;">Grupo ${gi + 1}</span>
-            </div>
+            <span style="font-size:13px;font-weight:700;display:block;margin-bottom:8px;">Grupo ${gi + 1}</span>
             <div style="margin-bottom:8px;">
               ${names.map(n => `<span style="display:inline-block;font-size:13px;margin-right:8px;margin-bottom:2px;">${escapeHtml(n)}</span>`).join('')}
             </div>
@@ -4731,12 +4721,58 @@ async function renderMesaGrupo(content, ctx) {
             ${resultHtml(result)}
           </div>`;
       }
+      return html;
     }
 
+    // Categoria do atleta: expandida logo abaixo de Meu Grupo
+    let myCatHtml = '';
+    if (myGroupCat && groupsNamed[myGroupCat]) {
+      const otherGroupsInMyCat = buildGroupsHtml(myGroupCat, true);
+      if (otherGroupsInMyCat) {
+        myCatHtml = `
+          <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+             color:var(--color-text-muted);margin:0 0 10px;">${catLabel(myGroupCat)} — outros grupos</p>
+          ${otherGroupsInMyCat}`;
+      }
+    }
+
+    // Outras categorias: accordion colapsado
+    const otherCats = cats.filter(c => c !== myGroupCat);
+    const accordionHtml = otherCats.map(cat => {
+      const catContent = buildGroupsHtml(cat, false);
+      if (!catContent) return '';
+      const uid = `acc-cat-${cat}`;
+      return `
+        <button class="grupos-accordion-btn" data-target="${uid}"
+          style="width:100%;display:flex;align-items:center;justify-content:space-between;
+                 background:var(--color-surface);border:var(--border);border-radius:8px;
+                 padding:12px 16px;margin-bottom:8px;cursor:pointer;text-align:left;">
+          <span style="font-size:13px;font-weight:700;">${catLabel(cat)}</span>
+          <span class="acc-chevron" style="font-size:12px;color:var(--color-text-muted);transition:transform .2s;">▼</span>
+        </button>
+        <div id="${uid}" style="display:none;margin-bottom:8px;">${catContent}</div>`;
+    }).join('');
+
+    const hasOtherCats = otherCats.some(c => groupsNamed[c]?.length);
+
     todosSection.innerHTML = `
-      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
-         color:var(--color-text-muted);margin:4px 0 12px;">Demais Grupos — Rodada ${round.round_number}</p>
-      ${html || '<p style="font-size:13px;color:var(--color-text-muted);">Nenhum outro grupo nesta rodada.</p>'}`;
+      ${myCatHtml}
+      ${hasOtherCats ? `
+        <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+           color:var(--color-text-muted);margin:8px 0 10px;">Outras Categorias</p>
+        ${accordionHtml}` : ''}`;
+
+    // Accordion toggle
+    todosSection.querySelectorAll('.grupos-accordion-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const panel = document.getElementById(btn.dataset.target);
+        const chevron = btn.querySelector('.acc-chevron');
+        const isOpen = panel.style.display !== 'none';
+        panel.style.display = isOpen ? 'none' : 'block';
+        chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+      });
+    });
+
   } catch (e) {
     todosSection.innerHTML = `<p style="font-size:13px;color:var(--color-text-muted);">Erro ao carregar grupos.</p>`;
   }
