@@ -3632,21 +3632,42 @@ async function renderMesaHome(content, ctx) {
       deltaBadge = `<span class="rank-delta-badge rank-delta-same">= mesma pos.</span>`;
   }
 
-  // Last result from history
-  const lastResult = historyList.length ? historyList[historyList.length - 1] : null;
-  const lastResultHtml = lastResult ? `
-    <div class="last-result-card">
-      <div class="last-result-header">
-        <span class="last-result-label">Último Resultado</span>
-        <span class="last-result-round">Rodada ${lastResult.round_number}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:12px;">
-        <span class="last-result-score ${lastResult.rank_in_group === 1 ? 'pos-1' : lastResult.rank_in_group === 2 ? 'pos-2' : lastResult.rank_in_group === 3 ? 'pos-3' : 'other'}">${lastResult.rank_in_group}°</span>
+  // Últimas 3 partidas (mais recentes primeiro)
+  const recentMatches = [...historyList]
+    .sort((a, b) => (b.round_number ?? 0) - (a.round_number ?? 0))
+    .slice(0, 3);
+
+  function miniMatchCard(h) {
+    const rankColor = h.rank_in_group === 1 ? 'var(--color-primary)' : h.rank_in_group === 2 ? '#C0C0C0' : h.rank_in_group === 3 ? '#CD7F32' : 'var(--color-text-muted)';
+    const setsHtml = (h.set_scores?.length ? h.set_scores : (h.my_sets || []).map(s => ({ won: s === 3 })))
+      .map(s => {
+        if (s.wo) return `<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(217,64,64,.15);color:#D94040;">WO</span>`;
+        const won = s.won ?? (s.score_mine > s.score_opp);
+        const bg = won ? 'rgba(255,140,0,.15)' : 'rgba(255,255,255,.06)';
+        const col = won ? 'var(--color-primary)' : 'var(--color-text-muted)';
+        const lbl = s.score_mine !== undefined ? `${s.score_mine}–${s.score_opp}${s.is_super_tiebreak ? ' STB' : ''}` : (won ? '3pts' : '1pt');
+        return `<span style="font-size:10px;padding:1px 5px;border-radius:4px;background:${bg};color:${col};font-weight:600;">${lbl}</span>`;
+      }).join('');
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
         <div>
-          <div style="font-size:13px;font-weight:600;">${lastResult.my_total ?? '—'} pts · Cat ${lastResult.cat}</div>
-          <div class="last-result-detail">${lastResult.group_size} atletas no grupo</div>
+          <span style="font-size:11px;color:var(--color-text-muted);">${catLabel(h.cat)} · Rod. ${h.round_number ?? '—'}</span>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">${setsHtml}</div>
         </div>
+        <div style="text-align:right;flex-shrink:0;margin-left:10px;">
+          <div style="font-size:16px;font-weight:800;color:${rankColor};">${h.rank_in_group}°</div>
+          <div style="font-size:11px;color:var(--color-text-muted);">${h.my_total ?? 0} pts</div>
+        </div>
+      </div>`;
+  }
+
+  const lastResultHtml = recentMatches.length ? `
+    <div class="card" style="padding:12px 16px;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);">Últimas Partidas</p>
+        <a href="#mesa/historico" style="font-size:12px;color:var(--color-primary);text-decoration:none;">Ver tudo →</a>
       </div>
+      ${recentMatches.map(miniMatchCard).join('')}
     </div>` : '';
 
   // Hero card
