@@ -1968,11 +1968,21 @@ async function renderAdminCategorias(content) {
     });
 
     content.querySelectorAll('.btn-add-titular').forEach(btn => {
-      btn.addEventListener('click', () => openAtletaPicker(btn.dataset.cat, 'titular', selectedSeason, () => paint(selectedSeason)));
+      btn.addEventListener('click', () => openAtletaPicker(btn.dataset.cat, 'titular', selectedSeason, async () => {
+        const fresh = await api('/api/seasons');
+        seasons = fresh;
+        selectedSeason = seasons.find(s => s.id === selectedSeason.id) || selectedSeason;
+        paint(selectedSeason);
+      }));
     });
 
     content.querySelectorAll('.btn-add-reserva').forEach(btn => {
-      btn.addEventListener('click', () => openAtletaPicker(btn.dataset.cat, 'reserva', selectedSeason, () => paint(selectedSeason)));
+      btn.addEventListener('click', () => openAtletaPicker(btn.dataset.cat, 'reserva', selectedSeason, async () => {
+        const fresh = await api('/api/seasons');
+        seasons = fresh;
+        selectedSeason = seasons.find(s => s.id === selectedSeason.id) || selectedSeason;
+        paint(selectedSeason);
+      }));
     });
 
     content.querySelectorAll('.btn-remove-atleta').forEach(btn => {
