@@ -1988,16 +1988,18 @@ async function renderAdminCategorias(content) {
     content.querySelectorAll('.btn-remove-atleta').forEach(btn => {
       btn.addEventListener('click', async () => {
         const { cat, role, id: athleteId } = btn.dataset;
-        const setup = selectedSeason.category_setup[cat];
-        const key = `${role}_ids`;
-        const newIds = setup[key].filter(x => x !== athleteId);
-        await saveCategory(selectedSeason, cat, { ...setup, [key]: newIds });
-        const idx = seasons.findIndex(s => s.id === selectedSeason.id);
-        if (idx !== -1) {
-          seasons[idx].category_setup[cat][key] = newIds;
-          selectedSeason = seasons[idx];
+        try {
+          await api(`/api/seasons/${selectedSeason.id}/categories/${cat}/bulk`, {
+            method: 'POST',
+            body: { action: 'remove', role, athlete_ids: [athleteId] },
+          });
+          const fresh = await api('/api/seasons');
+          seasons = fresh;
+          selectedSeason = seasons.find(s => s.id === selectedSeason.id) || selectedSeason;
+          paint(selectedSeason);
+        } catch (err) {
+          showToast(`Erro ao remover: ${err.message}`, 'error');
         }
-        paint(selectedSeason);
       });
     });
 
