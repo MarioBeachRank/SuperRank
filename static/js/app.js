@@ -7,9 +7,11 @@ const app = document.getElementById('app');
 
 const state = {
   isAdmin: false,
+  adminRole: null,       // "super" | "staff"
+  adminUsername: null,
   atleta: null,
-  athletes: [],      // cache da lista de atletas
-  seasons: [],       // cache da lista de temporadas
+  athletes: [],
+  seasons: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -23,13 +25,14 @@ function cloneTemplate(id) {
 }
 
 async function api(path, opts = {}) {
+  const isFormData = opts.body instanceof FormData;
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    headers: isFormData ? (opts.headers || {}) : { 'Content-Type': 'application/json', ...opts.headers },
     ...opts,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body: isFormData ? opts.body : (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
   });
   const json = await res.json();
-  if (!res.ok) throw Object.assign(new Error(json.error || 'Erro'), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(json.error || 'Erro'), { status: res.status, ...json });
   return json;
 }
 
@@ -230,7 +233,162 @@ const MSG = {
 
   contestacaoResolvida: (atletaNome, cat, gi, roundNum) =>
     `✅ ${atletaNome}, o admin resolveu a contestação do resultado da Rodada ${roundNum} (Cat ${cat} G${gi+1}). Acesse o SuperRank para ver o resultado final.`,
+
+  horarioAutoConfirmado: (meuNome, cat, gi, roundNum, slot, location) =>
+    `🎾 Pessoal! Todos marcamos nossos horários e o sistema confirmou automaticamente:\n\n📅 ${slot}\n📍 ${location || '—'}\nCat ${cat} · G${gi+1} · Rodada ${roundNum}\n\nNos vemos na quadra! 🏆`,
+
+  semHorarioEmComum: (meuNome, cat, gi, roundNum) =>
+    `⚠️ Pessoal! Todos do nosso grupo (Cat ${cat} G${gi+1} Rod ${roundNum}) já marcaram slots, mas não há horário em comum.\n\nPor favor, abram o SuperRank e adicionem mais opções de disponibilidade para conseguirmos agendar a partida. 🎾`,
 };
+
+// ---------------------------------------------------------------------------
+// Modal de notificação de slot (Sprint B)
+// ---------------------------------------------------------------------------
+
+function openSlotNotificationModal({ resolved, slot, cat, groupIndex, roundNumber, location, members, myId }) {
+  const gi = groupIndex;
+  const others = (members || []).filter(m => m.athlete_id !== myId && !String(m.athlete_id).startsWith('guest_'));
+
+  const msgText = resolved
+    ? MSG.horarioAutoConfirmado('', cat, gi, roundNumber, slot, location)
+    : MSG.semHorarioEmComum('', cat, gi, roundNumber);
+
+  const fmtSlot = resolved ? (() => {
+    try {
+      const [date, time] = slot.split(' ');
+      const d = new Date(date + 'T12:00:00');
+      const weekdays = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+      const months = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+      return `${weekdays[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} · ${time}`;
+    } catch(_) { return slot; }
+  })() : null;
+
+  const waButtons = others.map(m => {
+    if (!m.telefone) return `<span style="font-size:12px;color:var(--color-text-muted);">${escapeHtml(m.nome)} — sem telefone</span>`;
+    const digits = m.telefone.replace(/\D/g, '');
+    const url = `https://wa.me/${digits}?text=${encodeURIComponent(msgText)}`;
+    return `<a href="${url}" target="_blank" rel="noopener"
+               class="btn btn-primary" style="width:100%;text-align:center;text-decoration:none;
+               background:#25D366;border-color:#25D366;">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="#fff" style="vertical-align:middle;margin-right:6px;"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M11.985 0C5.373 0 0 5.373 0 11.985c0 2.11.554 4.087 1.523 5.797L.057 23.886l6.236-1.637A11.947 11.947 0 0011.985 24C18.597 24 24 18.627 24 12.015 24 5.373 18.597 0 11.985 0zm0 21.818a9.826 9.826 0 01-5.012-1.372l-.36-.214-3.713.974.993-3.619-.235-.372a9.81 9.81 0 01-1.506-5.215c0-5.423 4.412-9.835 9.833-9.835 5.422 0 9.834 4.412 9.834 9.835S17.407 21.818 11.985 21.818z"/></svg>
+              ${escapeHtml(m.nome)}
+            </a>`;
+  }).join('');
+
+  const copyBtn = `<button id="btn-copy-slot-msg" class="btn btn-ghost" style="width:100%;">📋 Copiar mensagem</button>`;
+
+  openModal(
+    resolved ? '🎾 Horário Confirmado Automaticamente!' : '⚠️ Sem Horário em Comum',
+    `<div style="text-align:center;">
+      ${resolved
+        ? `<div style="font-size:48px;margin-bottom:8px;">✅</div>
+           <p style="font-size:22px;font-weight:800;color:var(--color-primary);margin-bottom:4px;">${escapeHtml(fmtSlot)}</p>
+           <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:20px;">Cat ${cat} · Grupo ${gi+1} · Rodada ${roundNumber}</p>`
+        : `<div style="font-size:48px;margin-bottom:8px;">⚠️</div>
+           <p style="font-size:15px;font-weight:700;margin-bottom:6px;">Todos marcaram, mas sem horário em comum</p>
+           <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:20px;">
+             Avise seus colegas para adicionarem mais opções no app.
+           </p>`}
+      <p style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+         color:var(--color-text-muted);margin-bottom:10px;">Avisar pelo WhatsApp</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+        ${waButtons || '<p style="font-size:13px;color:var(--color-text-muted);">Nenhum colega com telefone cadastrado.</p>'}
+      </div>
+      ${copyBtn}
+    </div>`,
+    `<button class="btn btn-ghost" style="width:100%;" onclick="closeModal()">Fechar</button>`
+  );
+
+  document.getElementById('btn-copy-slot-msg')?.addEventListener('click', () => {
+    navigator.clipboard?.writeText(msgText).catch(() => {});
+    showToast('Mensagem copiada!', 'success');
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Unlock request modal (atleta solicita desbloqueio ao admin)
+// ---------------------------------------------------------------------------
+
+function openUnlockRequestModal(roundId, slot) {
+  openModal(
+    '🔒 Solicitar Desbloqueio de Slots',
+    `<div>
+      <p style="font-size:14px;margin-bottom:4px;">
+        Horário confirmado: <strong>${escapeHtml(slot)}</strong>
+      </p>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
+        Para alterar os slots do grupo o admin precisa aprovar o desbloqueio.
+        Todos os membros poderão remarcar após a aprovação.
+      </p>
+      <div class="form-group">
+        <label class="field-label">Motivo</label>
+        <textarea id="unlock-reason" class="field-input" rows="3"
+          placeholder="Ex: Não consigo nesse horário por compromisso já agendado…"></textarea>
+      </div>
+      <p id="unlock-msg" class="hidden" style="font-size:13px;margin-top:8px;"></p>
+    </div>`,
+    `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" id="btn-send-unlock" style="margin-left:8px;">Enviar Solicitação</button>`
+  );
+  document.getElementById('btn-send-unlock').addEventListener('click', async () => {
+    const reason = (document.getElementById('unlock-reason')?.value || '').trim();
+    const msgEl  = document.getElementById('unlock-msg');
+    const sendBtn = document.getElementById('btn-send-unlock');
+    if (!reason) {
+      msgEl.textContent = 'Informe o motivo.';
+      msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden');
+      return;
+    }
+    sendBtn.disabled = true; sendBtn.textContent = 'Enviando…';
+    try {
+      const res = await api(`/api/rounds/${roundId}/slots/unlock-request`, { method: 'POST', body: { reason } });
+      msgEl.textContent = res.message || 'Solicitação enviada! Aguarde aprovação do admin.';
+      msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
+      setTimeout(closeModal, 2500);
+    } catch (err) {
+      msgEl.textContent = `Erro: ${err.message}`;
+      msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden');
+      sendBtn.disabled = false; sendBtn.textContent = 'Enviar Solicitação';
+    }
+  });
+}
+
+function _renderLockedSlots(content, round, official_slot) {
+  const pendingReq = official_slot?.unlock_request?.status === 'pending';
+  const slot = official_slot?.slot || '—';
+  content.innerHTML = `
+    <div class="slots-screen">
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:4px;">Marcar Slots</h2>
+      <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:16px;">
+        Rodada ${round.round_number}
+      </p>
+      <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.35);
+                  border-radius:10px;padding:20px;text-align:center;">
+        <div style="font-size:40px;margin-bottom:8px;">🔒</div>
+        <p style="font-size:15px;font-weight:700;margin-bottom:4px;">Horário Confirmado Automaticamente</p>
+        <p style="font-size:24px;font-weight:800;color:var(--color-accent);margin:10px 0;">
+          ${escapeHtml(slot)}
+        </p>
+        <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:18px;">
+          Todos do grupo marcaram e o sistema encontrou um horário em comum.<br>
+          Edições estão bloqueadas.
+        </p>
+        ${pendingReq
+          ? `<div style="display:inline-block;background:rgba(245,158,11,0.15);
+                          border-radius:8px;padding:8px 16px;font-size:13px;color:var(--color-accent);">
+               ⏳ Solicitação de desbloqueio pendente — aguardando admin
+             </div>`
+          : `<button id="btn-solicitar-desbloqueio" class="btn btn-ghost">
+               🔓 Solicitar Desbloqueio
+             </button>`}
+      </div>
+    </div>`;
+  if (!pendingReq) {
+    content.querySelector('#btn-solicitar-desbloqueio')?.addEventListener('click', () => {
+      openUnlockRequestModal(round.id, slot);
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Modal genérico
@@ -288,6 +446,10 @@ const PAGE_TITLES = {
   'admin/contestacoes':  'Contestações — SuperRank',
   'admin/auditoria':     'Auditoria — SuperRank',
   'admin/config':        'Configurações — SuperRank',
+  'admin/admins':        'Admins — SuperRank',
+  'admin/whatsapp':      'WhatsApp — SuperRank',
+  'admin/pagamentos':    'Pagamentos — SuperRank',
+  'mesa/pagamento':      'Pagamento — SuperRank',
   'publico/ranking': 'Ranking — SuperRank',
   'publico/grupos':  'Grupos — SuperRank',
   'publico/resultados': 'Resultados — SuperRank',
@@ -336,6 +498,40 @@ function svgBarChart(dataMap, width = 360, height = 90) {
   return `<svg width="${totalW}" height="${height}" viewBox="0 0 ${totalW} ${height}" style="display:block;">${bars}</svg>`;
 }
 
+function svgRankEvolution(history, { color = '#F59E0B' } = {}) {
+  if (!history || history.length === 0) return '';
+  const VW = 320, VH = 100;
+  const P = { t: 20, r: 16, b: 24, l: 28 };
+  const w = VW - P.l - P.r, h = VH - P.t - P.b;
+
+  const maxRank = Math.max(...history.map(p => p.total || p.rank), history.length, 4);
+
+  function xPos(i) { return history.length === 1 ? P.l + w / 2 : P.l + i * w / (history.length - 1); }
+  function yPos(rank) { return P.t + ((rank - 1) / (maxRank - 1 || 1)) * h; }
+
+  const coords = history.map((p, i) => ({ x: xPos(i), y: yPos(p.rank), p }));
+  const linePath = coords.length > 1 ? `M ${coords.map(c => `${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' L ')}` : '';
+
+  const grid = `
+    <line x1="${P.l}" y1="${P.t}" x2="${P.l + w}" y2="${P.t}" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="3 4"/>
+    <line x1="${P.l}" y1="${P.t + h}" x2="${P.l + w}" y2="${P.t + h}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    <text x="${P.l - 4}" y="${P.t + 4}" text-anchor="end" font-size="8" fill="rgba(255,255,255,0.28)">1°</text>
+    <text x="${P.l - 4}" y="${P.t + h + 4}" text-anchor="end" font-size="8" fill="rgba(255,255,255,0.28)">${maxRank}°</text>`;
+
+  const areaPath = coords.length > 1
+    ? `<path d="M ${coords[0].x.toFixed(1)} ${(P.t + h).toFixed(1)} ${coords.map(c => `L ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ')} L ${coords[coords.length-1].x.toFixed(1)} ${(P.t + h).toFixed(1)} Z" fill="${color}" opacity="0.07"/>`
+    : '';
+
+  const line = linePath ? `<path d="${linePath}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : '';
+
+  const dots = coords.map(c => `
+    <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="4" fill="${color}"/>
+    <text x="${c.x.toFixed(1)}" y="${(c.y - 7).toFixed(1)}" text-anchor="middle" font-size="9" fill="${color}" font-weight="700">${c.p.rank}°</text>
+    <text x="${c.x.toFixed(1)}" y="${(VH - 4).toFixed(1)}" text-anchor="middle" font-size="8.5" fill="rgba(255,255,255,0.38)">R${c.p.round_number}</text>`).join('');
+
+  return `<svg viewBox="0 0 ${VW} ${VH}" width="100%" preserveAspectRatio="xMidYMid meet" style="display:block;">${grid}${areaPath}${line}${dots}</svg>`;
+}
+
 // ---------------------------------------------------------------------------
 // Toast notifications (Sprint 9)
 // ---------------------------------------------------------------------------
@@ -352,6 +548,25 @@ function showToast(msg, type = 'success') {
     el.classList.add('toast-out');
     el.addEventListener('animationend', () => el.remove(), { once: true });
   }, 3200);
+}
+
+// ---------------------------------------------------------------------------
+// Avatar helper — foto circular, fallback para inicial
+// ---------------------------------------------------------------------------
+
+function avatarHtml(photoUrl, name, size = 48) {
+  const initial = (name || '?').charAt(0).toUpperCase();
+  const style = `width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;`;
+  if (photoUrl) {
+    return `<img src="${escapeHtml(photoUrl)}" alt="${escapeHtml(name)}"
+                 style="${style}background:var(--color-surface);"
+                 onerror="this.outerHTML='<div style=\\'${style}background:var(--color-surface);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${Math.round(size*0.4)}px;color:var(--color-primary);border:1px solid rgba(255,255,255,0.1)\\'>${initial}</div>'" />`;
+  }
+  return `<div style="${style}background:var(--color-surface);display:flex;align-items:center;
+                        justify-content:center;font-weight:700;font-size:${Math.round(size*0.4)}px;
+                        color:var(--color-primary);border:1px solid rgba(255,255,255,0.1);">
+            ${initial}
+          </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +619,14 @@ async function route() {
     const me = await api('/api/auth/me').catch(() => ({ is_admin: false }));
     if (!me.is_admin) { location.hash = '#login'; return; }
     state.isAdmin = true;
+    // Fetch admin role if not yet loaded
+    if (!state.adminRole) {
+      try {
+        const adminMe = await api('/api/auth/admin/me');
+        state.adminRole     = adminMe.role || 'super';
+        state.adminUsername = adminMe.username || 'admin';
+      } catch (_) { state.adminRole = 'super'; }
+    }
     setPageTitle(`admin/${sub || 'dashboard'}`);
     await renderAdmin(sub);
     return;
@@ -460,8 +683,14 @@ function renderLogin() {
   app.querySelector('#form-login-admin').addEventListener('submit', async e => {
     e.preventDefault();
     const errorEl = app.querySelector('#login-admin-error');
+    const username = (e.target.username?.value || '').trim();
+    const password = e.target.password.value;
+    errorEl.classList.add('hidden');
     try {
-      await api('/api/auth/admin', { method: 'POST', body: { password: e.target.password.value } });
+      const res = await api('/api/auth/admin', { method: 'POST', body: { username, password } });
+      state.isAdmin      = true;
+      state.adminRole    = res.role || 'super';
+      state.adminUsername = res.username || 'admin';
       location.hash = '#admin/dashboard';
     } catch (err) {
       errorEl.textContent = err.message;
@@ -728,22 +957,42 @@ async function renderPublico(sub) {
   }
 }
 
-async function renderPublicoRanking(container, season) {
+async function renderPublicoRanking(container, season, selectedSeasonId = null) {
   container.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando ranking…</p>`;
 
+  let seasons = [];
+  try { seasons = await api('/api/seasons'); } catch (_) {}
+
+  const selectedSeason = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || season;
+
   let rankingData = {};
-  try { rankingData = await api(`/api/seasons/${season.id}/ranking`); } catch (_) {}
+  try { rankingData = await api(`/api/seasons/${selectedSeason.id}/ranking`); } catch (_) {}
 
   const cats = ['A','B','C','D'].filter(c => (rankingData[c] || []).length > 0);
 
   if (!cats.length) {
+    const seasonSelectEmpty = seasons.length > 1 ? `
+      <select id="ranking-season-sel-empty" class="input" style="font-size:13px;max-width:220px;margin-bottom:12px;">
+        ${seasons.map(s => `<option value="${s.id}"${s.id === selectedSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+      </select>` : '';
     container.innerHTML = `
-      <div class="empty-state" style="padding:40px 20px;">
-        <p class="empty-state-title">Nenhum resultado registrado</p>
-        <p>O ranking será atualizado após o lançamento dos primeiros resultados.</p>
+      <div style="padding:var(--space-md);">
+        ${seasonSelectEmpty}
+        <div class="empty-state" style="padding:20px 0;">
+          <p class="empty-state-title">Nenhum resultado registrado</p>
+          <p>O ranking será atualizado após o lançamento dos primeiros resultados.</p>
+        </div>
       </div>`;
+    container.querySelector('#ranking-season-sel-empty')?.addEventListener('change', e => {
+      renderPublicoRanking(container, season, e.target.value);
+    });
     return;
   }
+
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="ranking-season-sel" class="input" style="font-size:12px;max-width:200px;margin-bottom:12px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === selectedSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
 
   let activeCat = cats[0];
 
@@ -817,9 +1066,7 @@ async function renderPublicoRanking(container, season) {
 
   container.innerHTML = `
     <div style="padding:var(--space-md) var(--space-md) 0;">
-      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">
-        ${escapeHtml(season.name)}
-      </p>
+      ${seasonSelectHtml}
       <div class="ranking-cat-tabs" id="ranking-tabs">
         ${cats.map(c => `
           <button class="ranking-cat-tab${c === activeCat ? ' active' : ''}" data-cat="${c}">
@@ -832,6 +1079,10 @@ async function renderPublicoRanking(container, season) {
         ${renderTable(activeCat)}
       </div>
     </div>`;
+
+  container.querySelector('#ranking-season-sel')?.addEventListener('change', e => {
+    renderPublicoRanking(container, season, e.target.value);
+  });
 
   container.querySelectorAll('.ranking-cat-tab').forEach(btn =>
     btn.addEventListener('click', () => { activeCat = btn.dataset.cat; rebuild(); }));
@@ -933,9 +1184,26 @@ async function renderAdmin(sub) {
 
   app.querySelector('#btn-logout').addEventListener('click', async () => {
     await api('/api/auth/logout', { method: 'POST' });
-    state.isAdmin = false;
+    state.isAdmin = false; state.adminRole = null; state.adminUsername = null;
     location.hash = '#login';
   });
+
+  // Mostrar link de Admins só para super
+  if (state.adminRole === 'super') {
+    const sidebar = app.querySelector('#admin-sidebar nav, .sidebar-nav, #admin-sidebar');
+    const adminsLink = sidebar?.querySelector('a[href="#admin/admins"]');
+    if (adminsLink) adminsLink.parentElement.style.display = '';
+  } else {
+    const adminsLink = app.querySelector('a[href="#admin/admins"]');
+    if (adminsLink) adminsLink.parentElement.style.display = 'none';
+  }
+
+  // Exibe username do admin logado
+  const userLabel = app.querySelector('#admin-user-label');
+  if (userLabel && state.adminUsername) {
+    userLabel.textContent = state.adminUsername;
+    userLabel.title = `Role: ${state.adminRole || ''}`;
+  }
 
   initAdminSidebar();
 
@@ -962,7 +1230,7 @@ async function renderAdmin(sub) {
       await renderAdminTemporadas(content);
       break;
     case 'temporada/nova':
-      renderAdminTemporadaNova(content);
+      await renderAdminTemporadaNova(content);
       break;
     case 'rodada':
       await renderAdminRodada(content);
@@ -1000,6 +1268,15 @@ async function renderAdmin(sub) {
     case 'pendencias':
       await renderAdminPendencias(content);
       break;
+    case 'admins':
+      await renderAdminAdmins(content);
+      break;
+    case 'whatsapp':
+      await renderAdminWhatsapp(content);
+      break;
+    case 'pagamentos':
+      await renderAdminPagamentos(content);
+      break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela <code>#admin/${sub}</code> disponível em sprint futuro.</p>`;
   }
@@ -1013,13 +1290,15 @@ async function renderAdminDashboard(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando dashboard…</p>`;
 
   let stats = {}, rankingData = {}, allAthletes = [];
-  try { stats = await api('/api/admin/stats'); } catch (_) {}
-  if (stats.active_season_id) {
-    try { rankingData = await api(`/api/seasons/${stats.active_season_id}/ranking`); } catch (_) {}
-  }
-  if (stats.pending_registration > 0) {
-    try { allAthletes = await api('/api/athletes'); } catch (_) {}
-  }
+  const [statsRes] = await Promise.allSettled([api('/api/admin/stats')]);
+  if (statsRes.status === 'fulfilled') stats = statsRes.value;
+
+  const [rankRes, athRes] = await Promise.allSettled([
+    stats.active_season_id ? api(`/api/seasons/${stats.active_season_id}/ranking`) : Promise.resolve({}),
+    stats.pending_registration > 0 ? api('/api/athletes') : Promise.resolve([]),
+  ]);
+  if (rankRes.status === 'fulfilled') rankingData = rankRes.value;
+  if (athRes.status  === 'fulfilled') allAthletes = athRes.value;
   const pendingAthletes = allAthletes.filter(a => !a.admin_confirmed);
 
   // --- Progress bar da rodada ativa ---
@@ -1147,7 +1426,7 @@ async function renderAdminDashboard(content) {
 
     ${!stats.active_season_name ? `
       <div class="alert alert-info">
-        Nenhuma temporada ativa. <a href="#admin/temporada/nova">Criar temporada →</a>
+        Nenhuma temporada ativa. <a href="#admin/temporadas">Ativar temporada →</a>
       </div>` : ''}
 
     <div class="stat-grid">
@@ -1226,10 +1505,11 @@ function paintAtletasTable(content) {
         <option value="D">Cat D</option>
         <option value="sem">Sem categoria</option>
       </select>
-      <button id="filter-pendentes" class="btn btn-ghost btn-sm${pendingCount ? ' filter-pending-active' : ''}"
-        style="${pendingCount ? 'color:#BA7517;border-color:#BA7517;' : 'color:var(--color-text-muted);'}">
-        ⚠ Pendentes ${pendingCount ? `(${pendingCount})` : ''}
-      </button>
+      <select id="filter-confirmed" class="field-input" style="width:auto;min-width:160px;">
+        <option value="">Todos</option>
+        <option value="confirmed">Confirmados</option>
+        <option value="pending">Pendentes${pendingCount ? ` (${pendingCount})` : ''}</option>
+      </select>
     </div>
 
     ${tableBlock}`;
@@ -1238,18 +1518,19 @@ function paintAtletasTable(content) {
   content.querySelector('#btn-novo-atleta').addEventListener('click', () => openAtletaModal());
 
   // Busca + filtros
-  let showPendentesOnly = false;
-
   function applyFilters() {
-    const q = content.querySelector('#search-atleta').value.toLowerCase();
-    const typeF = content.querySelector('#filter-type').value;
-    const catF = content.querySelector('#filter-cat').value;
+    const q          = content.querySelector('#search-atleta').value.toLowerCase();
+    const typeF      = content.querySelector('#filter-type').value;
+    const catF       = content.querySelector('#filter-cat').value;
+    const confirmedF = content.querySelector('#filter-confirmed').value;
     const filtered = state.athletes.filter(a => {
       const matchName = (a.nome.toLowerCase().includes(q) || (a.apelido || '').toLowerCase().includes(q));
       const matchType = !typeF || a.type === typeF;
       const matchCat  = !catF || (catF === 'sem' ? !a.current_category : a.current_category === catF);
-      const matchPend = !showPendentesOnly || !a.admin_confirmed;
-      return matchName && matchType && matchCat && matchPend;
+      const matchConf = !confirmedF
+        || (confirmedF === 'confirmed' &&  a.admin_confirmed)
+        || (confirmedF === 'pending'   && !a.admin_confirmed);
+      return matchName && matchType && matchCat && matchConf;
     });
     const listEl  = content.querySelector('#atletas-list');
     const tbodyEl = content.querySelector('#atletas-tbody');
@@ -1261,14 +1542,7 @@ function paintAtletasTable(content) {
   content.querySelector('#search-atleta').addEventListener('input', applyFilters);
   content.querySelector('#filter-type').addEventListener('change', applyFilters);
   content.querySelector('#filter-cat').addEventListener('change', applyFilters);
-  content.querySelector('#filter-pendentes')?.addEventListener('click', () => {
-    showPendentesOnly = !showPendentesOnly;
-    const btn = content.querySelector('#filter-pendentes');
-    btn.style.color = showPendentesOnly ? '#F59E0B' : '';
-    btn.style.borderColor = showPendentesOnly ? '#F59E0B' : '';
-    btn.style.background = showPendentesOnly ? 'rgba(245,158,11,0.1)' : '';
-    applyFilters();
-  });
+  content.querySelector('#filter-confirmed').addEventListener('change', applyFilters);
 
   function attachRowActions() {
     // Confirmação rápida de atleta pendente
@@ -1406,6 +1680,7 @@ function renderAtletasRows(athletes) {
           <div class="atleta-card-acoes">
             ${!a.admin_confirmed ? `<button class="btn btn-ghost btn-sm btn-confirmar-atleta" data-id="${a.id}" style="color:#22C55E;font-weight:700;">✓ Confirmar</button>` : ''}
             ${waBtn(a.telefone)}
+            <a href="#publico/atleta/${a.id}" class="btn btn-ghost btn-sm" title="Ver perfil público" target="_blank" rel="noopener">👤</a>
             <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}">Editar</button>
             <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" title="PIN temporário">PIN</button>
             <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;">✕</button>
@@ -1437,6 +1712,7 @@ function renderAtletasRows(athletes) {
       <td style="text-align:right;white-space:nowrap;">
         ${!a.admin_confirmed ? `<button class="btn btn-ghost btn-sm btn-confirmar-atleta" data-id="${a.id}" style="color:#22C55E;font-weight:700;margin-right:4px;">✓ Confirmar</button>` : ''}
         ${waBtn(a.telefone)}
+        <a href="#publico/atleta/${a.id}" class="btn btn-ghost btn-sm" title="Ver perfil público" style="margin-left:4px;" target="_blank" rel="noopener">👤</a>
         <button class="btn btn-ghost btn-sm btn-editar-atleta" data-id="${a.id}" style="margin-left:4px;">Editar</button>
         <button class="btn btn-ghost btn-sm btn-reset-pin" data-id="${a.id}" data-nome="${escapeHtml(a.nome)}" style="margin-left:4px;" title="PIN temporário">PIN</button>
         <button class="btn btn-ghost btn-sm btn-excluir-atleta" data-id="${a.id}" style="color:#D94040;margin-left:4px;">Excluir</button>
@@ -1481,6 +1757,10 @@ function openAtletaModal(atleta = null) {
           <option value="D" ${atleta?.current_category === 'D' ? 'selected' : ''}>Cat D</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="field-label">Data de nascimento</label>
+        <input type="date" name="birth_date" class="field-input" value="${escapeHtml(atleta?.birth_date || '')}" max="${new Date().toISOString().slice(0,10)}" />
+      </div>
       <div class="form-group full">
         <label class="field-label">WhatsApp (com DDD)</label>
         ${phoneInputHtml(atleta?.telefone || '')}
@@ -1492,6 +1772,22 @@ function openAtletaModal(atleta = null) {
           <option value="ativo" ${atleta.status === 'ativo' ? 'selected' : ''}>Ativo</option>
           <option value="inativo" ${atleta.status === 'inativo' ? 'selected' : ''}>Inativo</option>
         </select>
+      </div>
+      <div class="form-group full">
+        <label class="field-label">Foto de perfil</label>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+          <div id="adm-photo-preview" style="flex-shrink:0;">
+            ${avatarHtml(atleta.photo_url, atleta.apelido || atleta.nome, 48)}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <label for="adm-photo-input" class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0;">
+              📷 Alterar
+            </label>
+            <input id="adm-photo-input" type="file" accept="image/jpeg,image/png,image/webp" style="display:none;" />
+            ${atleta.photo_url ? `<button type="button" id="adm-btn-remove-photo" class="btn btn-ghost btn-sm" style="color:#D94040;">✕ Remover</button>` : ''}
+          </div>
+        </div>
+        <p id="adm-photo-msg" style="font-size:12px;display:none;"></p>
       </div>` : ''}
       <p id="atleta-form-error" class="field-error full hidden" style="grid-column:1/-1;"></p>
     </form>`;
@@ -1504,6 +1800,46 @@ function openAtletaModal(atleta = null) {
 
   const phoneLocalEl = document.querySelector('#form-atleta input[name="phone_local"]');
   if (phoneLocalEl) applyPhoneMask(phoneLocalEl);
+
+  // Admin photo upload (edit mode only)
+  if (isEdit) {
+    const admPhotoInput   = document.getElementById('adm-photo-input');
+    const admPhotoPreview = document.getElementById('adm-photo-preview');
+    const admPhotoMsg     = document.getElementById('adm-photo-msg');
+
+    admPhotoInput?.addEventListener('change', async () => {
+      const file = admPhotoInput.files[0];
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { admPhotoMsg.textContent = 'Máximo 2 MB.'; admPhotoMsg.style.color='#D94040'; admPhotoMsg.style.display='block'; return; }
+      const localUrl = URL.createObjectURL(file);
+      if (admPhotoPreview) admPhotoPreview.innerHTML = avatarHtml(localUrl, atleta.apelido || atleta.nome, 48);
+      const fd = new FormData();
+      fd.append('photo', file);
+      admPhotoMsg.style.display = 'none';
+      try {
+        const res = await api(`/api/athletes/${atleta.id}/photo`, { method: 'POST', body: fd });
+        admPhotoMsg.textContent = '✓ Foto salva';
+        admPhotoMsg.style.color = 'var(--color-cat-c)'; admPhotoMsg.style.display = 'block';
+        atleta.photo_url = res.photo_url;
+      } catch (err) {
+        admPhotoMsg.textContent = err.message; admPhotoMsg.style.color = '#D94040'; admPhotoMsg.style.display = 'block';
+        if (admPhotoPreview) admPhotoPreview.innerHTML = avatarHtml(atleta.photo_url, atleta.apelido || atleta.nome, 48);
+      }
+      URL.revokeObjectURL(localUrl);
+    });
+
+    document.getElementById('adm-btn-remove-photo')?.addEventListener('click', async () => {
+      try {
+        await api(`/api/athletes/${atleta.id}/photo`, { method: 'DELETE' });
+        atleta.photo_url = null;
+        if (admPhotoPreview) admPhotoPreview.innerHTML = avatarHtml(null, atleta.apelido || atleta.nome, 48);
+        admPhotoMsg.textContent = 'Foto removida.'; admPhotoMsg.style.color = 'var(--color-cat-c)'; admPhotoMsg.style.display = 'block';
+        document.getElementById('adm-btn-remove-photo')?.remove();
+      } catch (err) {
+        admPhotoMsg.textContent = err.message; admPhotoMsg.style.color = '#D94040'; admPhotoMsg.style.display = 'block';
+      }
+    });
+  }
 
   document.getElementById('btn-salvar-atleta').addEventListener('click', async () => {
     const form = document.getElementById('form-atleta');
@@ -1518,6 +1854,7 @@ function openAtletaModal(atleta = null) {
       apelido: fd.get('apelido').trim(),
       type: fd.get('type'),
       telefone,
+      birth_date: fd.get('birth_date') || null,
     };
     if (isEdit) {
       body.current_category = fd.get('admin_category') || null;
@@ -1567,14 +1904,11 @@ function openAtletaModal(atleta = null) {
 
 async function renderAdminCategorias(content) {
   let seasons = [], athletes = [];
-  try {
-    [seasons, athletes] = await Promise.all([api('/api/seasons'), api('/api/athletes')]);
-    state.athletes = athletes;
-    state.seasons = seasons;
-  } catch (err) {
-    content.innerHTML = `<div class="alert alert-error">Erro ao carregar dados: ${err.message}</div>`;
-    return;
-  }
+  const [seasonsRes, athletesRes] = await Promise.allSettled([
+    api('/api/seasons'), api('/api/athletes'),
+  ]);
+  if (seasonsRes.status  === 'fulfilled') { seasons  = seasonsRes.value;  state.seasons  = seasons; }
+  if (athletesRes.status === 'fulfilled') { athletes = athletesRes.value; state.athletes = athletes; }
 
   if (!seasons.length) {
     content.innerHTML = `
@@ -1606,6 +1940,26 @@ async function renderAdminCategorias(content) {
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;" id="cats-grid">
         ${['A','B','C','D'].map(cat => renderCatPanel(cat, season)).join('')}
+      </div>
+
+      <!-- Barra flutuante de ações em bloco -->
+      <div id="cat-bulk-bar" style="display:none;position:sticky;bottom:0;left:0;right:0;
+           background:var(--color-surface);border-top:2px solid var(--color-accent);
+           padding:12px 16px;margin-top:12px;border-radius:var(--radius-md) var(--radius-md) 0 0;
+           box-shadow:0 -4px 16px rgba(0,0,0,.35);z-index:50;
+           display:none;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span id="cat-bulk-count" style="font-weight:700;flex:1;font-size:14px;min-width:100px;">0 selecionados</span>
+        <select id="cat-bulk-target" class="field-input" style="width:auto;min-width:140px;">
+          <option value="">Mover para…</option>
+          <option value="A">Categoria A</option>
+          <option value="B">Categoria B</option>
+          <option value="C">Categoria C</option>
+          <option value="D">Categoria D</option>
+        </select>
+        <button id="btn-cat-bulk-move" class="btn btn-primary btn-sm">Mover</button>
+        <button id="btn-cat-bulk-remove" class="btn btn-sm"
+                style="background:#D94040;border-color:#D94040;color:#fff;">Remover</button>
+        <button id="btn-cat-bulk-cancel" class="btn btn-ghost btn-sm">Cancelar</button>
       </div>`;
 
     content.querySelector('#season-selector').addEventListener('change', e => {
@@ -1627,10 +1981,7 @@ async function renderAdminCategorias(content) {
         const setup = selectedSeason.category_setup[cat];
         const key = `${role}_ids`;
         const newIds = setup[key].filter(x => x !== athleteId);
-        await saveCategory(selectedSeason, cat, {
-          ...setup,
-          [key]: newIds,
-        });
+        await saveCategory(selectedSeason, cat, { ...setup, [key]: newIds });
         const idx = seasons.findIndex(s => s.id === selectedSeason.id);
         if (idx !== -1) {
           seasons[idx].category_setup[cat][key] = newIds;
@@ -1638,6 +1989,100 @@ async function renderAdminCategorias(content) {
         }
         paint(selectedSeason);
       });
+    });
+
+    // ── Barra de ações em bloco ──────────────────────────────────────────
+    const bulkBar     = content.querySelector('#cat-bulk-bar');
+    const bulkCount   = content.querySelector('#cat-bulk-count');
+    const bulkTarget  = content.querySelector('#cat-bulk-target');
+    const btnMove     = content.querySelector('#btn-cat-bulk-move');
+    const btnRemove   = content.querySelector('#btn-cat-bulk-remove');
+    const btnCancel   = content.querySelector('#btn-cat-bulk-cancel');
+
+    function getChecked() {
+      return [...content.querySelectorAll('.cat-ath-check:checked')];
+    }
+
+    function refreshBulkBar() {
+      const n = getChecked().length;
+      bulkBar.style.display = n > 0 ? 'flex' : 'none';
+      bulkCount.textContent  = `${n} selecionado${n !== 1 ? 's' : ''}`;
+    }
+
+    content.addEventListener('change', e => {
+      if (e.target.classList.contains('cat-ath-check')) refreshBulkBar();
+    });
+
+    btnCancel?.addEventListener('click', () => {
+      content.querySelectorAll('.cat-ath-check').forEach(el => { el.checked = false; });
+      refreshBulkBar();
+    });
+
+    btnRemove?.addEventListener('click', async () => {
+      const checked = getChecked();
+      if (!checked.length) return;
+      // Agrupar por (cat, role) para chamar um bulk por grupo
+      const grouped = {};
+      checked.forEach(el => {
+        const k = `${el.dataset.cat}|${el.dataset.role}`;
+        if (!grouped[k]) grouped[k] = { cat: el.dataset.cat, role: el.dataset.role, ids: [] };
+        grouped[k].ids.push(el.dataset.id);
+      });
+      btnRemove.disabled = true;
+      try {
+        await Promise.allSettled(
+          Object.values(grouped).map(g =>
+            api(`/api/seasons/${selectedSeason.id}/categories/${g.cat}/bulk`, {
+              method: 'POST', body: { action: 'remove', role: g.role, athlete_ids: g.ids },
+            })
+          )
+        );
+        const fresh = await api('/api/seasons');
+        seasons = fresh;
+        selectedSeason = seasons.find(s => s.id === selectedSeason.id);
+        paint(selectedSeason);
+        showToast(`${checked.length} atleta(s) removido(s).`, 'success');
+      } catch (err) {
+        showToast(`Erro: ${err.message}`, 'error');
+        btnRemove.disabled = false;
+      }
+    });
+
+    btnMove?.addEventListener('click', async () => {
+      const targetCat = bulkTarget?.value;
+      if (!targetCat) { showToast('Selecione a categoria destino.', 'warning'); return; }
+      const checked = getChecked();
+      if (!checked.length) return;
+      const grouped = {};
+      checked.forEach(el => {
+        const k = `${el.dataset.cat}|${el.dataset.role}`;
+        if (!grouped[k]) grouped[k] = { cat: el.dataset.cat, role: el.dataset.role, ids: [] };
+        grouped[k].ids.push(el.dataset.id);
+      });
+      btnMove.disabled = true;
+      try {
+        // Remove das categorias de origem
+        await Promise.allSettled(
+          Object.values(grouped).map(g =>
+            api(`/api/seasons/${selectedSeason.id}/categories/${g.cat}/bulk`, {
+              method: 'POST', body: { action: 'remove', role: g.role, athlete_ids: g.ids },
+            })
+          )
+        );
+        // Adiciona na categoria destino como titular
+        const allIds = checked.map(el => el.dataset.id);
+        await api(`/api/seasons/${selectedSeason.id}/categories/${targetCat}/bulk`, {
+          method: 'POST', body: { action: 'add', role: 'titular', athlete_ids: allIds },
+        });
+        const fresh = await api('/api/seasons');
+        seasons = fresh;
+        selectedSeason = seasons.find(s => s.id === selectedSeason.id);
+        paint(selectedSeason);
+        showToast(`${allIds.length} atleta(s) movido(s) para Cat ${targetCat}.`, 'success');
+      } catch (err) {
+        showToast(`Erro: ${err.message}`, 'error');
+        btnMove.disabled = false;
+      }
     });
   }
 
@@ -1666,6 +2111,8 @@ function renderCatPanel(cat, season) {
         <div style="min-height:32px;">
           ${titulares.map(a => `
             <span class="athlete-chip">
+              <input type="checkbox" class="cat-ath-check" data-cat="${cat}" data-role="titular" data-id="${a.id}"
+                     style="width:14px;height:14px;flex-shrink:0;accent-color:var(--color-accent);cursor:pointer;" />
               ${escapeHtml(a.nome)}
               <button class="btn-remove-atleta" data-cat="${cat}" data-role="titular" data-id="${a.id}" title="Remover">×</button>
             </span>`).join('') || '<span style="color:var(--color-text-muted);font-size:12px;">Nenhum titular</span>'}
@@ -1682,6 +2129,8 @@ function renderCatPanel(cat, season) {
         <div style="min-height:32px;">
           ${reservas.map(a => `
             <span class="athlete-chip">
+              <input type="checkbox" class="cat-ath-check" data-cat="${cat}" data-role="reserva" data-id="${a.id}"
+                     style="width:14px;height:14px;flex-shrink:0;accent-color:var(--color-accent);cursor:pointer;" />
               ${escapeHtml(a.nome)}
               <button class="btn-remove-atleta" data-cat="${cat}" data-role="reserva" data-id="${a.id}" title="Remover">×</button>
             </span>`).join('') || '<span style="color:var(--color-text-muted);font-size:12px;">Nenhuma reserva</span>'}
@@ -1691,62 +2140,73 @@ function renderCatPanel(cat, season) {
 }
 
 function openAtletaPicker(cat, role, season, onSaved) {
-  // Atletas já alocados como titular em qualquer categoria desta temporada
   const allTitularIds = new Set(
     Object.values(season.category_setup).flatMap(s => s.titular_ids)
   );
   const currentSetup = season.category_setup[cat];
-
-  // Exclui quem já está nessa sessão como titular ou reserva, e titulares de outras categorias (para role=titular)
   const excluded = new Set([
     ...currentSetup.titular_ids,
     ...currentSetup.reserva_ids,
     ...(role === 'titular' ? allTitularIds : []),
   ]);
-
-  const available = state.athletes.filter(a =>
-    a.status === 'ativo' && !excluded.has(a.id)
-  );
-
+  const available = state.athletes.filter(a => a.status === 'ativo' && !excluded.has(a.id));
   const label = role === 'titular' ? 'Titular' : 'Reserva';
-  const body = `
+
+  const modalBody = `
     <p style="font-size:13px;color:var(--color-text-muted);margin-bottom:12px;">
-      Selecione um atleta para adicionar como <strong>${label}</strong> em <strong>Cat ${cat}</strong>:
+      Selecione um ou mais atletas para adicionar como <strong>${label}</strong> em <strong>Cat ${cat}</strong>:
     </p>
-    <input type="search" id="picker-search" class="search-input" placeholder="Buscar atleta…" style="margin-bottom:8px;width:100%;" />
+    <input type="search" id="picker-search" class="search-input" placeholder="Buscar atleta…"
+           style="margin-bottom:8px;width:100%;" />
     <div class="picker-list" id="picker-list">
       ${renderPickerItems(available)}
     </div>`;
 
-  openModal(`Adicionar ${label} — Cat ${cat}`, body, '');
+  const modalFooter = `
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" id="btn-picker-add" disabled>Selecione atletas</button>`;
 
-  document.getElementById('picker-search').addEventListener('input', e => {
-    const q = e.target.value.toLowerCase();
-    document.getElementById('picker-list').innerHTML = renderPickerItems(
-      available.filter(a => a.nome.toLowerCase().includes(q))
-    );
-    attachPickerClicks();
-  });
+  openModal(`Adicionar ${label} — Cat ${cat}`, modalBody, modalFooter);
 
-  function attachPickerClicks() {
-    document.querySelectorAll('.picker-item').forEach(item => {
-      item.addEventListener('click', async () => {
-        const athleteId = item.dataset.id;
-        const key = `${role}_ids`;
-        const newIds = [...currentSetup[key], athleteId];
-        try {
-          await saveCategory(season, cat, { ...currentSetup, [key]: newIds });
-          currentSetup[key] = newIds;
-          closeModal();
-          onSaved();
-        } catch (err) {
-          showToast(`Erro: ${err.message}`, 'error');
-        }
-      });
-    });
+  const listEl   = document.getElementById('picker-list');
+  const searchEl = document.getElementById('picker-search');
+  const addBtn   = document.getElementById('btn-picker-add');
+
+  function updateAddBtn() {
+    const checked = listEl.querySelectorAll('.picker-check:checked');
+    const n = checked.length;
+    addBtn.disabled   = n === 0;
+    addBtn.textContent = n === 0 ? 'Selecione atletas' : `Adicionar ${n} atleta${n !== 1 ? 's' : ''}`;
   }
 
-  attachPickerClicks();
+  listEl.addEventListener('change', e => {
+    if (e.target.classList.contains('picker-check')) updateAddBtn();
+  });
+
+  searchEl.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    listEl.innerHTML = renderPickerItems(available.filter(a => a.nome.toLowerCase().includes(q)));
+    updateAddBtn();
+  });
+
+  addBtn.addEventListener('click', async () => {
+    const ids = [...listEl.querySelectorAll('.picker-check:checked')].map(el => el.dataset.id);
+    if (!ids.length) return;
+    addBtn.disabled = true;
+    addBtn.textContent = 'Salvando…';
+    try {
+      await api(`/api/seasons/${season.id}/categories/${cat}/bulk`, {
+        method: 'POST',
+        body: { action: 'add', role, athlete_ids: ids },
+      });
+      closeModal();
+      onSaved();
+    } catch (err) {
+      showToast(`Erro: ${err.message}`, 'error');
+      addBtn.disabled = false;
+      updateAddBtn();
+    }
+  });
 }
 
 function renderPickerItems(athletes) {
@@ -1754,13 +2214,15 @@ function renderPickerItems(athletes) {
     return `<p class="placeholder-text" style="padding:16px;">Nenhum atleta disponível.</p>`;
   }
   return athletes.map(a => `
-    <div class="picker-item" data-id="${a.id}">
-      <div>
+    <label class="picker-item" data-id="${a.id}" style="cursor:pointer;display:flex;align-items:center;gap:10px;">
+      <input type="checkbox" class="picker-check" data-id="${a.id}"
+             style="width:16px;height:16px;flex-shrink:0;accent-color:var(--color-accent);" />
+      <div style="flex:1;min-width:0;">
         <span class="picker-item-name">${escapeHtml(a.nome)}</span>
         <span class="picker-item-meta" style="margin-left:8px;">${typeBadge(a.type)}</span>
       </div>
       ${a.current_category ? catLabel(a.current_category) : ''}
-    </div>`).join('');
+    </label>`).join('');
 }
 
 async function saveCategory(season, cat, setup) {
@@ -1778,45 +2240,64 @@ async function saveCategory(season, cat, setup) {
 async function renderAdminTemporadas(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando temporadas…</p>`;
 
-  let seasons = [];
-  try { seasons = await api('/api/seasons'); } catch (err) {
-    content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(err.message)}</div>`;
+  let seasons = [], ligas = [];
+  const [seasonsRes, ligasRes] = await Promise.allSettled([
+    api('/api/seasons'), api('/api/ligas'),
+  ]);
+  if (seasonsRes.status !== 'fulfilled') {
+    content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(seasonsRes.reason?.message)}</div>`;
     return;
   }
+  seasons = seasonsRes.value;
+  if (ligasRes.status === 'fulfilled') ligas = ligasRes.value;
+
+  const ligaById = Object.fromEntries(ligas.map(l => [l.id, l]));
+  let filterLiga = '';
 
   const paint = () => {
+    const visible = filterLiga ? seasons.filter(s => s.liga_id === filterLiga) : seasons;
+    const ligaSelectHtml = ligas.length > 1
+      ? `<select id="filter-liga-sel" class="field-input" style="font-size:13px;max-width:220px;">
+           <option value="">Todas as ligas</option>
+           ${ligas.map(l => `<option value="${l.id}"${l.id === filterLiga ? ' selected' : ''}>${escapeHtml(l.name)}</option>`).join('')}
+         </select>`
+      : '';
+
     content.innerHTML = `
       <div class="section-header">
         <div>
           <h1 class="section-title">Temporadas</h1>
           <p class="section-subtitle">${seasons.length} temporada(s) cadastrada(s)</p>
         </div>
-        <a href="#admin/temporada/nova" class="btn btn-primary">+ Nova Temporada</a>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          ${ligaSelectHtml}
+          <a href="#admin/temporada/nova" class="btn btn-primary">+ Nova Temporada</a>
+        </div>
       </div>
 
-      ${!seasons.length ? `<div class="alert alert-info">Nenhuma temporada. <a href="#admin/temporada/nova">Criar agora →</a></div>` : `
+      ${!visible.length ? `<div class="alert alert-info">${seasons.length ? 'Nenhuma temporada nessa liga.' : 'Nenhuma temporada.'} <a href="#admin/temporada/nova">Criar agora →</a></div>` : `
       <div class="card" style="padding:0;overflow:hidden;">
         <table class="data-table" style="width:100%;">
           <thead>
             <tr>
               <th>Nome</th>
-              <th>Ano</th>
+              <th>Liga</th>
               <th>Status</th>
               <th>Período</th>
               <th>Rodadas</th>
-              <th>Dias/Rodada</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            ${seasons.map(s => `
+            ${visible.map(s => {
+              const liga = ligaById[s.liga_id];
+              return `
               <tr>
                 <td style="font-weight:500;">${escapeHtml(s.name)}</td>
-                <td>${s.year}</td>
+                <td style="font-size:12px;color:var(--color-text-muted);">${liga ? escapeHtml(liga.name) : '—'}</td>
                 <td>${seasonStatusBadge(s.status)}</td>
                 <td style="font-size:12px;">${s.start_date} → ${s.end_date}</td>
                 <td>${s.rounds_total}</td>
-                <td>${s.round_duration_days || 10}</td>
                 <td style="text-align:right;white-space:nowrap;display:flex;gap:6px;justify-content:flex-end;">
                   <button class="btn btn-ghost btn-sm btn-editar-temporada"
                     data-id="${s.id}" data-nome="${escapeHtml(s.name)}"
@@ -1825,13 +2306,73 @@ async function renderAdminTemporadas(content) {
                     Editar
                   </button>
                   ${s.status === 'pending'
+                    ? `<button class="btn btn-ghost btn-sm btn-ativar-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#22C55E;font-weight:700;">✓ Ativar</button>`
+                    : ''}
+                  ${s.status === 'active'
+                    ? `<button class="btn btn-ghost btn-sm btn-desativar-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#BA7517;">Desativar</button>`
+                    : ''}
+                  ${s.status === 'pending'
                     ? `<button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#D94040;">Excluir</button>`
                     : ''}
                 </td>
-              </tr>`).join('')}
+              </tr>`;}).join('')}
           </tbody>
         </table>
       </div>`}`;
+
+    content.querySelector('#filter-liga-sel')?.addEventListener('change', e => {
+      filterLiga = e.target.value;
+      paint();
+    });
+
+    content.querySelectorAll('.btn-ativar-temporada').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id   = btn.dataset.id;
+        const nome = btn.dataset.nome;
+        const jaAtiva = seasons.find(s => s.status === 'active');
+        if (jaAtiva && jaAtiva.id !== id) {
+          if (!confirm(`A temporada "${jaAtiva.name}" já está ativa. Deseja desativá-la e ativar "${nome}"?`)) return;
+          btn.disabled = true;
+          btn.textContent = 'Aguarde…';
+          try {
+            await api(`/api/seasons/${jaAtiva.id}`, { method: 'PUT', body: { status: 'pending' } });
+          } catch (_) {}
+        } else {
+          btn.disabled = true;
+          btn.textContent = 'Aguarde…';
+        }
+        try {
+          const updated = await api(`/api/seasons/${id}`, { method: 'PUT', body: { status: 'active' } });
+          seasons = seasons.map(s => s.id === updated.id ? updated : s.id === jaAtiva?.id ? { ...s, status: 'pending' } : s);
+          showToast(`Temporada "${nome}" ativada.`, 'success');
+          paint();
+        } catch (err) {
+          showToast('Erro: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = '✓ Ativar';
+        }
+      });
+    });
+
+    content.querySelectorAll('.btn-desativar-temporada').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id   = btn.dataset.id;
+        const nome = btn.dataset.nome;
+        if (!confirm(`Desativar temporada "${nome}"? Ela voltará ao status Pendente.`)) return;
+        btn.disabled = true;
+        btn.textContent = 'Aguarde…';
+        try {
+          const updated = await api(`/api/seasons/${id}`, { method: 'PUT', body: { status: 'pending' } });
+          seasons = seasons.map(s => s.id === id ? updated : s);
+          showToast(`Temporada "${nome}" desativada.`, 'success');
+          paint();
+        } catch (err) {
+          showToast('Erro: ' + err.message, 'error');
+          btn.disabled = false;
+          btn.textContent = 'Desativar';
+        }
+      });
+    });
 
     content.querySelectorAll('.btn-excluir-temporada').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1918,8 +2459,26 @@ async function renderAdminTemporadas(content) {
   paint();
 }
 
-function renderAdminTemporadaNova(content) {
+async function renderAdminTemporadaNova(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando ligas…</p>`;
+
+  let ligas = [];
+  try { ligas = await api('/api/ligas'); } catch (_) {}
+
+  if (!ligas.length) {
+    content.innerHTML = `
+      <div class="section-header"><div>
+        <h1 class="section-title">Nova Temporada</h1>
+      </div></div>
+      <div class="alert alert-warning">
+        Nenhuma liga cadastrada. Toda temporada precisa pertencer a uma liga.
+        <a href="#admin/liga" style="margin-left:8px;">Criar liga →</a>
+      </div>`;
+    return;
+  }
+
   const today = new Date().toISOString().split('T')[0];
+  const preselectedLiga = new URLSearchParams(location.hash.split('?')[1] || '').get('liga') || ligas[0].id;
 
   content.innerHTML = `
     <div class="section-header">
@@ -1931,6 +2490,12 @@ function renderAdminTemporadaNova(content) {
 
     <div class="card" style="max-width:600px;">
       <form id="form-temporada" class="form-grid">
+        <div class="form-group full">
+          <label class="field-label">Liga <span style="color:#D94040;">*</span></label>
+          <select name="liga_id" id="f-liga-id" class="field-input" required>
+            ${ligas.map(l => `<option value="${l.id}"${l.id === preselectedLiga ? ' selected' : ''}>${escapeHtml(l.name)} (${l.year})</option>`).join('')}
+          </select>
+        </div>
         <div class="form-group full">
           <label class="field-label">Nome da temporada</label>
           <input type="text" name="name" class="field-input" placeholder="Ex.: Temporada 1/2025" required />
@@ -1978,13 +2543,12 @@ function renderAdminTemporadaNova(content) {
         <p id="temporada-success" class="field-success hidden" style="grid-column:1/-1;"></p>
 
         <div style="grid-column:1/-1;display:flex;gap:12px;justify-content:flex-end;">
-          <a href="#admin/dashboard" class="btn btn-ghost">Cancelar</a>
+          <a href="#admin/temporadas" class="btn btn-ghost">Cancelar</a>
           <button type="submit" class="btn btn-primary">Criar temporada</button>
         </div>
       </form>
     </div>`;
 
-  // Auto-calculate end_date from start_date + rounds * days_per_round - 1
   function calcEndDate() {
     const start   = content.querySelector('#f-start-date')?.value;
     const rounds  = parseInt(content.querySelector('[name="rounds_total"]')?.value) || 0;
@@ -1996,21 +2560,18 @@ function renderAdminTemporadaNova(content) {
   }
 
   function refreshEndDate() {
-    const isManual = content.querySelector('#chk-extend')?.checked;
-    if (!isManual) {
+    if (!content.querySelector('#chk-extend')?.checked) {
       const calc = calcEndDate();
       const field = content.querySelector('#f-end-date');
       if (field && calc) field.value = calc;
     }
   }
 
-  // Wire up auto-recalculation
   ['#f-start-date', '[name="rounds_total"]', '[name="round_duration_days"]'].forEach(sel => {
     content.querySelector(sel)?.addEventListener('input', refreshEndDate);
     content.querySelector(sel)?.addEventListener('change', refreshEndDate);
   });
 
-  // Toggle manual override
   content.querySelector('#chk-extend')?.addEventListener('change', function() {
     const field = content.querySelector('#f-end-date');
     const tag   = content.querySelector('#end-date-tag');
@@ -2028,28 +2589,33 @@ function renderAdminTemporadaNova(content) {
     }
   });
 
-  // Set initial value
   refreshEndDate();
 
   content.querySelector('#form-temporada').addEventListener('submit', async e => {
     e.preventDefault();
-    const errorEl = content.querySelector('#temporada-error');
+    const errorEl   = content.querySelector('#temporada-error');
     const successEl = content.querySelector('#temporada-success');
     errorEl.classList.add('hidden');
     successEl.classList.add('hidden');
 
     const fd = new FormData(e.target);
     const body = {
-      name: fd.get('name').trim(),
-      year: parseInt(fd.get('year')),
-      rounds_total: parseInt(fd.get('rounds_total')),
+      name:                fd.get('name').trim(),
+      year:                parseInt(fd.get('year')),
+      rounds_total:        parseInt(fd.get('rounds_total')),
       round_duration_days: parseInt(fd.get('round_duration_days')),
-      start_date: fd.get('start_date'),
-      end_date: fd.get('end_date'),
-      location: fd.get('location').trim(),
-      location_mode: fd.get('location_mode'),
+      start_date:          fd.get('start_date'),
+      end_date:            fd.get('end_date'),
+      location:            fd.get('location').trim(),
+      location_mode:       fd.get('location_mode'),
+      liga_id:             fd.get('liga_id'),
     };
 
+    if (!body.liga_id) {
+      errorEl.textContent = 'Selecione uma liga.';
+      errorEl.classList.remove('hidden');
+      return;
+    }
     if (body.start_date >= body.end_date) {
       errorEl.textContent = 'A data de fim deve ser posterior à de início.';
       errorEl.classList.remove('hidden');
@@ -2065,7 +2631,6 @@ function renderAdminTemporadaNova(content) {
       state.seasons.push(season);
       successEl.textContent = `Temporada "${season.name}" criada! Agora configure as categorias.`;
       successEl.classList.remove('hidden');
-      // Redireciona para categorias após 1.5s
       setTimeout(() => { location.hash = '#admin/categorias'; }, 1500);
     } catch (err) {
       errorEl.textContent = err.message;
@@ -2082,23 +2647,21 @@ function renderAdminTemporadaNova(content) {
 
 async function renderAdminMediacao(content) {
   let seasons = [], athletes = [];
-  try {
-    [seasons, athletes] = await Promise.all([api('/api/seasons'), api('/api/athletes')]);
-    state.athletes = athletes;
-  } catch (err) {
-    content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(err.message)}</div>`;
-    return;
-  }
+  const [seasonsRes, athletesRes] = await Promise.allSettled([
+    api('/api/seasons'), api('/api/athletes'),
+  ]);
+  if (seasonsRes.status  === 'fulfilled') seasons  = seasonsRes.value;
+  if (athletesRes.status === 'fulfilled') { athletes = athletesRes.value; state.athletes = athletes; }
 
   const athletesById = Object.fromEntries(athletes.map(a => [a.id, a]));
 
-  // Coleta todos os grupos needs_mediation ou pending de todos as rodadas
+  // Carrega rodadas de todas as temporadas em paralelo
   let allRounds = [];
-  for (const season of seasons) {
-    try {
-      const rounds = await api(`/api/seasons/${season.id}/rounds`);
-      allRounds.push(...rounds.map(r => ({ ...r, season_name: season.name })));
-    } catch (_) {}
+  const roundsSettled = await Promise.allSettled(
+    seasons.map(s => api(`/api/seasons/${s.id}/rounds`).then(rounds => rounds.map(r => ({ ...r, season_name: s.name }))))
+  );
+  for (const res of roundsSettled) {
+    if (res.status === 'fulfilled') allRounds.push(...res.value);
   }
 
   // Grupos que precisam de mediação
@@ -2269,11 +2832,12 @@ async function renderAdminRodada(content) {
   if (!seasons.length) {
     content.innerHTML = `
       <div class="section-header"><h1 class="section-title">Painel de Rodada</h1></div>
-      <div class="alert alert-warning">Nenhuma temporada. <a href="#admin/temporada/nova">Criar temporada →</a></div>`;
+      <div class="alert alert-warning">Nenhuma temporada. <a href="#admin/temporadas">Criar temporada →</a></div>`;
     return;
   }
 
   // Usa temporada ativa, ou a mais recente
+  const hasActive = seasons.some(s => s.status === 'active');
   const activeSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
   let selectedSeason = activeSeason;
   let rounds = [];
@@ -2303,6 +2867,16 @@ async function renderAdminRodada(content) {
             : `<span class="badge badge-closed">Todas as rodadas sorteadas</span>`}
         </div>
       </div>
+
+      ${!hasActive ? `
+        <div class="alert alert-warning" style="margin-bottom:16px;">
+          ⚠ Nenhuma temporada está ativa. Os sorteios ficam disponíveis somente para temporadas ativas.
+          <a href="#admin/temporadas" style="margin-left:8px;font-weight:600;">Ativar temporada →</a>
+        </div>` : season.status !== 'active' ? `
+        <div class="alert alert-info" style="margin-bottom:16px;">
+          Visualizando <strong>${escapeHtml(season.name)}</strong> (${season.status}).
+          A temporada ativa é outra — use o seletor abaixo para alternar.
+        </div>` : ''}
 
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap;">
         <label class="field-label" style="margin:0;">Temporada:</label>
@@ -2486,6 +3060,35 @@ async function renderAdminRodada(content) {
               });
             } catch (_) {}
           }
+
+          // Unlock approve/reject buttons
+          body.querySelectorAll('.btn-unlock-approve, .btn-unlock-reject').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const decision = btn.classList.contains('btn-unlock-approve') ? 'approve' : 'reject';
+              const label = decision === 'approve' ? 'Aprovar' : 'Rejeitar';
+              confirmModal(
+                `${label} desbloqueio`,
+                decision === 'approve'
+                  ? 'Aprovar o desbloqueio? O grupo poderá remarcar os slots.'
+                  : 'Rejeitar a solicitação? O horário original será mantido.',
+                async () => {
+                  btn.disabled = true;
+                  try {
+                    const res = await api(
+                      `/api/rounds/${btn.dataset.roundId}/groups/${btn.dataset.cat}/${btn.dataset.gi}/unlock`,
+                      { method: 'POST', body: { decision } }
+                    );
+                    showToast(res.message || `${label}do com sucesso.`, 'success');
+                    await loadAndPaint(selectedSeason);
+                  } catch (err) {
+                    showToast(`Erro: ${err.message}`, 'error');
+                    btn.disabled = false;
+                  }
+                },
+                label
+              );
+            });
+          });
         }
       });
     });
@@ -2639,6 +3242,29 @@ function renderGroupsGrid(cat, round) {
                   <span class="set-team">${s.team_b.map(escapeHtml).join(' + ')}</span>
                 </div>`).join('')}
             </div>
+            ${(() => {
+              const osEntry = (round.official_slots || {})[cat]?.[idx];
+              const unlockReq = osEntry?.unlock_request;
+              if (!unlockReq || unlockReq.status !== 'pending') return '';
+              const requesterIdx = (round.groups?.[cat]?.[idx] || []).indexOf(unlockReq.requested_by);
+              const requesterName = requesterIdx >= 0
+                ? (groupsNamed[idx]?.[requesterIdx] || unlockReq.requested_by)
+                : (unlockReq.requested_by || '?');
+              return `
+                <div class="alert alert-warning" style="font-size:12px;margin-top:10px;padding:10px 12px;border-radius:8px;">
+                  <div style="font-weight:700;margin-bottom:4px;">🔓 Solicitação de desbloqueio de slots</div>
+                  <div style="margin-bottom:2px;"><strong>${escapeHtml(requesterName)}</strong> pediu desbloqueio:</div>
+                  <div style="color:var(--color-text-muted);font-style:italic;margin-bottom:8px;">"${escapeHtml(unlockReq.reason)}"</div>
+                  <div style="display:flex;gap:8px;">
+                    <button class="btn btn-sm btn-primary btn-unlock-approve"
+                      data-round-id="${round.id}" data-cat="${cat}" data-gi="${idx}"
+                      style="font-size:11px;padding:4px 10px;">✓ Aprovar</button>
+                    <button class="btn btn-sm btn-ghost btn-unlock-reject"
+                      data-round-id="${round.id}" data-cat="${cat}" data-gi="${idx}"
+                      style="font-size:11px;padding:4px 10px;color:#D94040;">✗ Rejeitar</button>
+                  </div>
+                </div>`;
+            })()}
           </div>`;
       }).join('')}
     </div>`;
@@ -2703,6 +3329,12 @@ async function renderMesa(sub) {
   let ctx = null;
   try { ctx = await api('/api/mesa/context'); } catch (_) {}
 
+  // Badge no nav de Resultado quando há algo para o atleta fazer
+  const resultNavBadge = app.querySelector('#resultado-nav-badge');
+  if (resultNavBadge && ctx?.result_status === 'pending_mine') {
+    resultNavBadge.style.display = 'block';
+  }
+
   // Convidados: ocultar tabs irrelevantes e marcar badge
   if (ctx?.is_guest) {
     const nav = app.querySelector('#mesa-bottom-nav');
@@ -2728,6 +3360,7 @@ async function renderMesa(sub) {
     case 'perfil':         await renderMesaPerfil(content); break;
     case 'ranking':        await renderMesaRanking(content, ctx); break;
     case 'notificacoes':   await renderMesaNotificacoes(content); break;
+    case 'pagamento':      await renderMesaPagamento(content); break;
     default:
       content.innerHTML = `<p class="placeholder-text">Tela disponível em sprint futuro.</p>`;
   }
@@ -2867,23 +3500,37 @@ async function renderMesaHome(content, ctx) {
   const slotResolved = official_slot && official_slot.status === 'resolved';
   const athleteCat = ctx.athlete.current_category;
 
+  // Parallel fetch: ranking + history + ranking evolution + payment status
+  let myRank = null, catRanking = [], historyList = [], rankEvolution = [], paymentStatus = null;
+  const [rankRes, histRes, rankEvolRes, payRes] = await Promise.allSettled([
+    season && athleteCat ? api(`/api/seasons/${season.id}/ranking?cat=${athleteCat}`) : Promise.resolve({}),
+    api('/api/mesa/history'),
+    ctx.athlete?.id && season?.id
+      ? api(`/api/athletes/${ctx.athlete.id}/ranking-history?season_id=${season.id}`)
+      : Promise.resolve({ history: [] }),
+    api('/api/mesa/payment-status'),
+  ]);
+  if (rankRes.status === 'fulfilled') {
+    catRanking = rankRes.value[athleteCat] || [];
+    myRank = catRanking.find(r => r.athlete_id === ctx.athlete.id) || null;
+  }
+  if (histRes.status === 'fulfilled') {
+    historyList = histRes.value.history || [];
+  }
+  if (rankEvolRes.status === 'fulfilled') {
+    rankEvolution = (rankEvolRes.value.history || []).filter(h => h.cat === athleteCat);
+  }
+  if (payRes.status === 'fulfilled') {
+    paymentStatus = payRes.value;
+  }
+
   let pendencias = [];
   if (round && !hasSlots) pendencias.push({ icon: '⏰', text: 'Marcar slots de disponibilidade', link: '#mesa/slots', urgent: true });
   if (pending_result) pendencias.push({ icon: '📋', text: 'Confirmar resultado do grupo', link: '#mesa/resultado', urgent: true });
+  if (paymentStatus?.season_id && !paymentStatus.paid && paymentStatus.payment_amount > 0)
+    pendencias.push({ icon: '💳', text: 'Pagamento da temporada pendente', link: '#mesa/pagamento', urgent: true });
   if (group && slotResolved) pendencias.push({ icon: '✅', text: `Horário definido: ${official_slot.slot}`, link: '#mesa/grupo', urgent: false });
   if (group && !slotResolved && hasSlots) pendencias.push({ icon: '🕐', text: 'Aguardando horário oficial do grupo', link: '#mesa/grupo', urgent: false });
-
-  // Parallel fetch: ranking + history
-  let myRank = null, catRanking = [], historyList = [];
-  try {
-    const [rankData, histData] = await Promise.all([
-      season && athleteCat ? api(`/api/seasons/${season.id}/ranking?cat=${athleteCat}`) : Promise.resolve({}),
-      api('/api/mesa/history'),
-    ]);
-    catRanking = rankData[athleteCat] || [];
-    myRank = catRanking.find(r => r.athlete_id === ctx.athlete.id) || null;
-    historyList = histData.history || [];
-  } catch (_) {}
 
   // Ranking mini-section: top 5 + neighborhood
   function buildMiniRanking() {
@@ -3005,8 +3652,13 @@ async function renderMesaHome(content, ctx) {
   // Hero card
   const heroHtml = myRank ? `
     <div class="mesa-hero-card">
-      <div class="mesa-hero-greeting">Olá,</div>
-      <div class="mesa-hero-name">${escapeHtml(ctx.athlete.nome)}</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        ${avatarHtml(ctx.athlete.photo_url, ctx.athlete.nome, 44)}
+        <div>
+          <div class="mesa-hero-greeting" style="margin:0;font-size:12px;">Olá,</div>
+          <div class="mesa-hero-name" style="margin:0;">${escapeHtml(ctx.athlete.nome)}</div>
+        </div>
+      </div>
       <div class="mesa-hero-cat-row">
         <span class="badge badge-cat-${athleteCat?.toLowerCase()}">${catLabel(athleteCat)}</span>
       </div>
@@ -3033,14 +3685,27 @@ async function renderMesaHome(content, ctx) {
           <div class="mesa-stat-label">Rodadas</div>
         </div>
       </div>
+      ${rankEvolution.length >= 1 ? `
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.07);">
+          <p style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+             color:var(--color-text-muted);margin-bottom:8px;">Evolução de Posição</p>
+          ${svgRankEvolution(rankEvolution.slice(-8))}
+        </div>` : ''}
+      <a href="#publico/atleta/${ctx.athlete.id}" style="display:block;text-align:center;font-size:12px;color:var(--color-text-muted);text-decoration:none;margin-top:12px;">👤 Ver meu perfil público</a>
     </div>` : `
     <div class="mesa-hero-card">
-      <div class="mesa-hero-greeting">Olá,</div>
-      <div class="mesa-hero-name">${escapeHtml(ctx.athlete.nome)}</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        ${avatarHtml(ctx.athlete.photo_url, ctx.athlete.nome, 44)}
+        <div>
+          <div class="mesa-hero-greeting" style="margin:0;font-size:12px;">Olá,</div>
+          <div class="mesa-hero-name" style="margin:0;">${escapeHtml(ctx.athlete.nome)}</div>
+        </div>
+      </div>
       <div class="mesa-hero-cat-row">
         <span class="badge badge-cat-${athleteCat?.toLowerCase()}">${catLabel(athleteCat)}</span>
       </div>
       <p style="font-size:13px;color:var(--color-text-muted);margin-top:8px;">Sem dados de ranking ainda.</p>
+      <a href="#publico/atleta/${ctx.athlete.id}" style="display:block;text-align:center;font-size:12px;color:var(--color-text-muted);text-decoration:none;margin-top:12px;">👤 Ver meu perfil público</a>
     </div>`;
 
   content.innerHTML = `
@@ -3057,6 +3722,19 @@ async function renderMesaHome(content, ctx) {
           <p style="font-size:20px;font-weight:700;color:var(--color-primary);">Rodada ${round.round_number} de ${round.rounds_total}</p>
           ${round.target_date ? `<p style="font-size:13px;color:var(--color-text-muted);">Data: ${round.target_date}</p>` : ''}
           ${round.deadline_slots ? `<p style="font-size:12px;color:${deadlineUrgencyColor(round.deadline_slots)};">${deadlineUrgencyText(round.deadline_slots)}</p>` : ''}
+          ${ctx.round_progress ? (() => {
+            const { confirmed, total } = ctx.round_progress;
+            const pct = Math.round(100 * confirmed / (total || 1));
+            return `<div style="margin-top:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">
+                <span>Resultados confirmados</span>
+                <span>${confirmed}/${total}</span>
+              </div>
+              <div class="round-progress-track">
+                <div class="round-progress-fill" style="width:${pct}%;"></div>
+              </div>
+            </div>`;
+          })() : ''}
         </div>` : `<p class="placeholder-text">Nenhuma rodada criada ainda.</p>`}
 
       <div id="mesa-schedule-block" style="margin-bottom:16px;"></div>
@@ -3082,11 +3760,27 @@ async function renderMesaHome(content, ctx) {
           <p style="font-size:13px;font-weight:600;">Meu Grupo</p>
           ${group ? `<p style="font-size:11px;color:var(--color-text-muted);">Cat ${group.category} · Grupo ${group.group_index + 1}</p>` : ''}
         </a>
-        <a href="#mesa/resultado" class="card" style="display:block;text-align:center;text-decoration:none;${pending_result ? 'border-left:3px solid var(--color-accent);' : ''}">
-          <p style="font-size:20px;margin-bottom:4px;">📋</p>
-          <p style="font-size:13px;font-weight:600;">Resultado</p>
-          <p style="font-size:11px;color:var(--color-text-muted);">${pending_result ? 'Aguardando sua confirmação' : 'Ver resultado do grupo'}</p>
-        </a>
+        ${(() => {
+          const rs = ctx.result_status || 'none';
+          const accentBorder = (rs === 'pending_mine') ? 'border-left:3px solid var(--color-accent);' : '';
+          const icon  = rs === 'confirmed' ? '✅' : rs === 'pending_mine' ? '🔔' : rs === 'contested' ? '⚑' : '📋';
+          const label = rs === 'confirmed'     ? 'Resultado'
+                      : rs === 'pending_mine'  ? 'Confirmar Resultado'
+                      : rs === 'pending_peers' ? 'Resultado'
+                      : rs === 'contested'     ? 'Resultado'
+                      :                          'Lançar Resultado';
+          const sub_  = rs === 'confirmed'     ? 'Placar confirmado'
+                      : rs === 'pending_mine'  ? 'Aguardando sua confirmação'
+                      : rs === 'pending_peers' ? 'Aguardando colegas'
+                      : rs === 'contested'     ? 'Contestado — admin revisando'
+                      : round                  ? 'Toque para inserir o placar'
+                      :                          'Sem rodada ativa';
+          return `<a href="#mesa/resultado" class="card" style="display:block;text-align:center;text-decoration:none;${accentBorder}">
+            <p style="font-size:20px;margin-bottom:4px;">${icon}</p>
+            <p style="font-size:13px;font-weight:600;">${label}</p>
+            <p style="font-size:11px;color:var(--color-text-muted);">${sub_}</p>
+          </a>`;
+        })()}
         <a href="#mesa/ranking" class="card" style="display:block;text-align:center;text-decoration:none;">
           <p style="font-size:20px;margin-bottom:4px;">🏆</p>
           <p style="font-size:13px;font-weight:600;">Ranking</p>
@@ -3127,21 +3821,27 @@ async function renderMesaHome(content, ctx) {
 // Mesa: Ranking
 // ---------------------------------------------------------------------------
 
-async function renderMesaRanking(content, ctx) {
-  const season = ctx?.season;
-  const myId   = ctx?.athlete?.id;
-  const myCat  = ctx?.athlete?.current_category;
+async function renderMesaRanking(content, ctx, selectedSeasonId = null) {
+  const myId  = ctx?.athlete?.id;
+  const myCat = ctx?.athlete?.current_category;
 
   content.innerHTML = `<p class="placeholder-text" style="padding:var(--space-md);">Carregando ranking…</p>`;
 
-  if (!season) {
+  // Fetch seasons list alongside ranking for the selected season
+  let seasons = [];
+  try { seasons = await api('/api/seasons'); } catch (_) {}
+
+  const activeSeason   = ctx?.season || seasons.find(s => s.status === 'active');
+  const selectedSeason = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || activeSeason;
+
+  if (!selectedSeason) {
     content.innerHTML = `<div style="padding:var(--space-md);"><p class="placeholder-text">Nenhuma temporada ativa.</p></div>`;
     return;
   }
 
   let allRanking = {};
   try {
-    allRanking = await api(`/api/seasons/${season.id}/ranking`);
+    allRanking = await api(`/api/seasons/${selectedSeason.id}/ranking`);
   } catch (err) {
     content.innerHTML = `<div style="padding:var(--space-md);"><p class="placeholder-text">Erro ao carregar ranking.</p></div>`;
     return;
@@ -3241,13 +3941,22 @@ async function renderMesaRanking(content, ctx) {
       ${catLabel(c)}
     </button>`).join('');
 
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="mesa-ranking-season-sel" class="input" style="font-size:12px;max-width:200px;margin-bottom:10px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === selectedSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
+
   content.innerHTML = `
     <div style="padding:var(--space-md);">
-      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:12px;">Ranking</h2>
-      <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">${escapeHtml(season.name)}</p>
+      <h2 style="font-size:18px;font-weight:700;color:var(--color-primary);margin-bottom:8px;">Ranking</h2>
+      ${seasonSelectHtml}
       <div class="mesa-ranking-tabs">${tabs}</div>
       <div id="mesa-ranking-table-area">${renderTable(activeCat)}</div>
     </div>`;
+
+  content.querySelector('#mesa-ranking-season-sel')?.addEventListener('change', e => {
+    renderMesaRanking(content, ctx, e.target.value);
+  });
 
   content.querySelectorAll('.mesa-ranking-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -3351,7 +4060,16 @@ function renderMesaSlots(content, ctx) {
     return;
   }
 
-  const { round, my_slots = [], eligible_slots: eligible = [] } = ctx;
+  // Lock check: if group slot was auto-resolved and not yet unlocked, show locked UI
+  const official_slot = ctx.official_slot;
+  if (official_slot?.status === 'resolved' &&
+      official_slot?.resolved_by === 'auto' &&
+      !official_slot?.unlock_approved) {
+    _renderLockedSlots(content, ctx.round, official_slot);
+    return;
+  }
+
+  const { round, my_slots = [], eligible_slots: eligible = [], group_slots_map: groupMap = {} } = ctx;
 
   // New format: "YYYY-MM-DD HH:MM"; old: "HH:MM"
   const isNewFmt = eligible.length > 0 && eligible[0].includes('-');
@@ -3387,11 +4105,40 @@ function renderMesaSlots(content, ctx) {
       const msgEl = content.querySelector('#slots-msg');
       const btn = content.querySelector('#btn-salvar-slots');
       btn.disabled = true; btn.textContent = 'Salvando…';
+      let savedOk = false;
       try {
-        await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
-        msgEl.textContent = '✓ Slots salvos!'; msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
-      } catch (err) { msgEl.textContent = `Erro: ${err.message}`; msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden'); }
-      finally { btn.disabled = false; btn.textContent = 'Salvar slots'; }
+        const res = await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
+        savedOk = true;
+        msgEl.textContent = res.auto_resolved ? `✓ Slots salvos! Horário do grupo: ${res.auto_slot}` : '✓ Slots salvos!';
+        msgEl.style.color = 'var(--color-cat-c)'; msgEl.classList.remove('hidden');
+        btn.textContent = '✓ Salvo';
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-ghost'; editBtn.textContent = '✏️ Editar';
+        editBtn.addEventListener('click', () => {
+          btn.textContent = 'Salvar slots'; btn.disabled = false;
+          editBtn.remove(); msgEl.classList.add('hidden');
+        });
+        btn.parentNode.insertBefore(editBtn, btn.nextSibling);
+        if (res.auto_resolved || res.all_submitted) {
+          openSlotNotificationModal({
+            resolved: res.auto_resolved, slot: res.auto_slot,
+            cat: ctx.group?.category, groupIndex: ctx.group?.group_index,
+            roundNumber: round.round_number, location: ctx.group?.location,
+            members: ctx.group_slots_status || [], myId: ctx.athlete?.id,
+          });
+        }
+      } catch (err) {
+        if (err.status === 423) {
+          _renderLockedSlots(content, round, {
+            slot: err.slot, status: 'resolved', resolved_by: 'auto',
+            unlock_request: err.unlock_request,
+          });
+          return;
+        }
+        msgEl.textContent = `Erro: ${err.message}`; msgEl.style.color = '#D94040'; msgEl.classList.remove('hidden');
+      } finally {
+        if (!savedOk) { btn.disabled = false; btn.textContent = 'Salvar slots'; }
+      }
     });
     return;
   }
@@ -3461,7 +4208,10 @@ function renderMesaSlots(content, ctx) {
     const wkendTimes = weekend ? times : [];
     const renderBtn = time => {
       const slot = `${date} ${time}`;
-      return `<button class="slot-btn${selected.has(slot)?' selected':''}" data-slot="${slot}">${time}</button>`;
+      const peers = groupMap[slot] || 0;
+      const total = peers + (selected.has(slot) ? 1 : 0);
+      const badge = total > 0 ? `<span class="slot-peer-badge${total >= 4 ? ' slot-peer-full' : ''}">${total}</span>` : '';
+      return `<button class="slot-btn${selected.has(slot)?' selected':''}" data-slot="${slot}">${time}${badge}</button>`;
     };
     return weekend
       ? `<p class="slots-period-label">Fim de Semana / Feriado (07:00–10:00)</p>
@@ -3504,7 +4254,7 @@ function renderMesaSlots(content, ctx) {
           }).join('')}
         </div>
         ${hasSelection && checkedCount > 0 ? `
-          <button class="btn btn-primary btn-sm btn-aplicar-rep" style="margin-top:12px;width:100%;">
+          <button class="btn btn-primary btn-aplicar-rep" style="margin-top:12px;width:100%;font-size:14px;font-weight:700;">
             ✓ Aplicar a ${checkedCount} dia${checkedCount>1?'s':''} selecionado${checkedCount>1?'s':''}
           </button>` : ''}
       </div>`;
@@ -3576,16 +4326,43 @@ function renderMesaSlots(content, ctx) {
       const msgEl = content.querySelector('#slots-msg');
       const btn = content.querySelector('#btn-salvar-slots');
       btn.disabled = true; btn.textContent = 'Salvando…';
+      let savedOk = false;
       try {
-        await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
-        msgEl.textContent = '✓ Slots salvos com sucesso!';
+        const res = await api(`/api/rounds/${round.id}/slots`, { method: 'PUT', body: { slots: [...selected] } });
+        savedOk = true;
+        msgEl.textContent = res.auto_resolved ? `✓ Slots salvos! Horário do grupo: ${res.auto_slot}` : '✓ Slots salvos com sucesso!';
         msgEl.style.color = 'var(--color-cat-c)';
         msgEl.classList.remove('hidden');
+        btn.textContent = '✓ Salvo';
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn btn-ghost'; editBtn.textContent = '✏️ Editar';
+        editBtn.addEventListener('click', () => {
+          btn.textContent = 'Salvar slots'; btn.disabled = false;
+          editBtn.remove(); msgEl.classList.add('hidden');
+        });
+        btn.parentNode.insertBefore(editBtn, btn.nextSibling);
+        if (res.auto_resolved || res.all_submitted) {
+          openSlotNotificationModal({
+            resolved: res.auto_resolved, slot: res.auto_slot,
+            cat: ctx.group?.category, groupIndex: ctx.group?.group_index,
+            roundNumber: round.round_number, location: ctx.group?.location,
+            members: ctx.group_slots_status || [], myId: ctx.athlete?.id,
+          });
+        }
       } catch (err) {
+        if (err.status === 423) {
+          _renderLockedSlots(content, round, {
+            slot: err.slot, status: 'resolved', resolved_by: 'auto',
+            unlock_request: err.unlock_request,
+          });
+          return;
+        }
         msgEl.textContent = `Erro: ${err.message}`;
         msgEl.style.color = '#D94040';
         msgEl.classList.remove('hidden');
-      } finally { btn.disabled = false; btn.textContent = 'Salvar slots'; }
+      } finally {
+        if (!savedOk) { btn.disabled = false; btn.textContent = 'Salvar slots'; }
+      }
     });
 
     attachInteractions();
@@ -3613,15 +4390,17 @@ function renderMesaSlots(content, ctx) {
     // Apply replication (additive: adds to existing slots of target days)
     content.querySelector('.btn-aplicar-rep')?.addEventListener('click', () => {
       const times = getTimesForDate(activeDate);
-      const count = replicationTargets.size;
-      for (const targetDate of replicationTargets) {
+      const targets = [...replicationTargets];
+      const count = targets.length;
+      for (const targetDate of targets) {
         for (const time of times) {
           if (byDate[targetDate]?.includes(time)) selected.add(`${targetDate} ${time}`);
         }
       }
       replicationTargets.clear();
       showToast(`Horários replicados para ${count} dia${count>1?'s':''}.`, 'success');
-      refreshPanel();
+      if (targets.length > 0) activeDate = targets[0];
+      render();
     });
   }
 
@@ -3669,6 +4448,10 @@ async function renderMesaGrupo(content, ctx) {
       </p>
 
       ${slotCard}
+
+      <button id="btn-copy-grupo" class="btn btn-ghost btn-sm" style="width:100%;margin-bottom:16px;">
+        📋 Copiar info do grupo
+      </button>
 
       <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
          color:var(--color-text-muted);margin-bottom:8px;">Atletas do Grupo</p>
@@ -3721,7 +4504,34 @@ async function renderMesaGrupo(content, ctx) {
       <div class="quick-msg-grid" id="quick-msg-btns"></div>
 
       <div id="guest-request-section"></div>
+
+      <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+         color:var(--color-text-muted);margin:24px 0 8px;">Confronto Direto (H2H)</p>
+      <div id="h2h-grupo-section">
+        <p class="placeholder-text" style="font-size:13px;">Carregando H2H…</p>
+      </div>
     </div>`;
+
+  // Copiar info do grupo para área de transferência
+  content.querySelector('#btn-copy-grupo')?.addEventListener('click', () => {
+    const lines = [
+      `🎾 Rodada ${round?.round_number ?? '—'} — ${catLabel(group.category)}, Grupo ${group.group_index + 1}`,
+      `👥 ${group.names.join(', ')}`,
+    ];
+    if (slotResolved) {
+      lines.push(`⏰ Horário: ${official_slot.slot}`);
+      if (group.location) lines.push(`📍 ${group.location}`);
+    } else {
+      lines.push('⏰ Aguardando horário');
+    }
+    const text = lines.join('\n');
+    navigator.clipboard?.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    });
+    showToast('Info do grupo copiada!', 'success');
+  });
 
   // Quick message buttons (populated after innerHTML is set since we need admin phone)
   const msgGrid = content.querySelector('#quick-msg-btns');
@@ -3790,6 +4600,39 @@ async function renderMesaGrupo(content, ctx) {
     msgGrid.querySelectorAll('.quick-msg-btn').forEach(btn => {
       btn.addEventListener('click', () => btns[parseInt(btn.dataset.idx)].action());
     });
+  }
+
+  // H2H vs each opponent in the group
+  const h2hSection = content.querySelector('#h2h-grupo-section');
+  if (h2hSection && athlete?.id) {
+    const opponents = (group.athlete_ids || []).filter(id => id !== athlete.id && !id.startsWith('guest_'));
+    if (!opponents.length) {
+      h2hSection.innerHTML = `<p style="font-size:13px;color:var(--color-text-muted);">Sem adversários para comparar.</p>`;
+    } else {
+      const h2hResults = await Promise.allSettled(
+        opponents.map(id => api(`/api/h2h/${athlete.id}/${id}`))
+      );
+      const cards = opponents.map((oppId, i) => {
+        const res = h2hResults[i];
+        if (res.status !== 'fulfilled') return '';
+        const h2h = res.value;
+        const s = h2h.summary;
+        const oppNome = h2h.athlete_b.nome;
+        const wins = s.a_wins, losses = s.b_wins, draws = s.draws;
+        const color = wins > losses ? 'var(--color-primary)' : losses > wins ? '#D94040' : 'var(--color-text-muted)';
+        return `
+          <div class="card" style="padding:12px 16px;margin-bottom:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:13px;font-weight:600;">${escapeHtml(oppNome)}</span>
+              <span style="font-size:12px;font-weight:700;color:${color};">${wins}V ${losses}D ${draws}E</span>
+            </div>
+            <p style="font-size:11px;color:var(--color-text-muted);margin-top:2px;">
+              ${s.encounters} grupo${s.encounters !== 1 ? 's' : ''} · Sets diretos ${s.direct_sets_a}×${s.direct_sets_b}
+            </p>
+          </div>`;
+      }).join('');
+      h2hSection.innerHTML = cards || `<p style="font-size:13px;color:var(--color-text-muted);">Sem confrontos anteriores.</p>`;
+    }
   }
 
   // Pending guest request for this group?
@@ -4195,13 +5038,17 @@ function renderMesaResultado(content, ctx) {
 // Admin: Resultados — lançar e gerenciar
 // ---------------------------------------------------------------------------
 
-async function renderAdminResultados(content) {
+async function renderAdminResultados(content, selectedSeasonId = null) {
   let rounds = [], athletes = [], seasons = [];
-  try { seasons = await api('/api/seasons'); } catch (_) {}
-  try { athletes = await api('/api/athletes'); } catch (_) {}
+  const [seasonsRes, athletesRes] = await Promise.allSettled([
+    api('/api/seasons'), api('/api/athletes'),
+  ]);
+  if (seasonsRes.status  === 'fulfilled') seasons  = seasonsRes.value;
+  if (athletesRes.status === 'fulfilled') athletes = athletesRes.value;
 
   const athletesById = Object.fromEntries(athletes.map(a => [a.id, a]));
-  const activeSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
+  const defaultSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
+  const activeSeason  = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || defaultSeason;
 
   if (!activeSeason) {
     content.innerHTML = `<div class="section-header"><h1 class="section-title">Resultados</h1></div>
@@ -4214,12 +5061,18 @@ async function renderAdminResultados(content) {
     rounds = allRounds.filter(r => r.status !== 'cancelled');
   } catch (_) {}
 
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="resultados-admin-season-sel" class="input" style="font-size:13px;max-width:220px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === activeSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
+
   content.innerHTML = `
     <div class="section-header">
       <div>
         <h1 class="section-title">Resultados</h1>
         <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
       </div>
+      ${seasonSelectHtml}
     </div>
     <div class="resultados-filter-bar">
       <div id="resultados-cat-tabs" class="cat-tabs">
@@ -4292,9 +5145,12 @@ async function renderAdminResultados(content) {
   // Renderiza painel por rodada
   const renderRounds = async () => {
     let html = '';
-    for (const rnd of rounds) {
-      let roundResults = [];
-      try { roundResults = await api(`/api/rounds/${rnd.id}/results`); } catch (_) {}
+    const resultsSettled = await Promise.allSettled(
+      rounds.map(rnd => api(`/api/rounds/${rnd.id}/results`))
+    );
+    for (let i = 0; i < rounds.length; i++) {
+      const rnd = rounds[i];
+      const roundResults = resultsSettled[i].status === 'fulfilled' ? resultsSettled[i].value : [];
       const resultsByGroupKey = Object.fromEntries(
         roundResults.map(r => [`${r.cat}-${r.group_idx}`, r])
       );
@@ -4386,6 +5242,9 @@ async function renderAdminResultados(content) {
   };
 
   await renderRounds();
+  content.querySelector('#resultados-admin-season-sel')?.addEventListener('change', e => {
+    renderAdminResultados(content, e.target.value);
+  });
 }
 
 function _renderSetScorelines(sets, athletesById) {
@@ -4790,24 +5649,24 @@ function openWoForm(roundId, cat, gi, group, athletesById, refresh) {
 // Admin: Fechamento de Temporada (Sprint 7)
 // ---------------------------------------------------------------------------
 
-async function renderAdminFechamento(content) {
+async function renderAdminFechamento(content, selectedSeasonId = null) {
   content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
 
   let seasons = [];
   try { seasons = await api('/api/seasons'); } catch (_) {}
 
-  const activeSeason = seasons.find(s => s.status === 'active') || seasons.find(s => s.status === 'pending');
-  const closedSeasons = seasons.filter(s => s.status === 'closed');
+  const activeSeason    = seasons.find(s => s.status === 'active') || seasons.find(s => s.status === 'pending');
+  const selectedSeason  = (selectedSeasonId && seasons.find(s => s.id === selectedSeasonId)) || activeSeason;
 
-  if (!activeSeason) {
+  if (!selectedSeason) {
     content.innerHTML = `
       <div class="section-header"><h1 class="section-title">Fechamento de Temporada</h1></div>
-      <div class="alert alert-info">Nenhuma temporada ativa.</div>`;
+      <div class="alert alert-info">Nenhuma temporada disponível.</div>`;
     return;
   }
 
   let preview = null;
-  try { preview = await api(`/api/seasons/${activeSeason.id}/fechamento/preview`); } catch (_) {}
+  try { preview = await api(`/api/seasons/${selectedSeason.id}/fechamento/preview`); } catch (_) {}
 
   const actionLabel = { promoted: 'Promoção ↑', relegated: 'Rebaixamento ↓', stays: 'Permanece' };
   const actionBadge = { promoted: 'badge-promoted', relegated: 'badge-relegated', stays: 'badge-stays' };
@@ -4844,11 +5703,12 @@ async function renderAdminFechamento(content) {
   const warnings = preview?.movements?.warnings || [];
   const projectedSizes = preview?.movements?.projected_sizes || {};
 
-  const openRoundsCount = preview?.open_rounds_count || 0;
-  const openRounds      = preview?.open_rounds || [];
-  const ineligible      = preview?.ineligible_warnings || [];
-  const isClosed        = activeSeason.status === 'closed';
-  const movedCount      = (preview?.summary || []).filter(e => e.action !== 'stays').length;
+  const openRoundsCount  = preview?.open_rounds_count || 0;
+  const openRounds       = preview?.open_rounds || [];
+  const ineligible       = preview?.ineligible_warnings || [];
+  const isClosed         = selectedSeason.status === 'closed';
+  const isViewingActive  = activeSeason && selectedSeason.id === activeSeason.id;
+  const movedCount       = (preview?.summary || []).filter(e => e.action !== 'stays').length;
 
   // Ranking final com notas de desempate e marcação de zona
   const rankingsHtml = Object.entries(preview?.rankings || {})
@@ -4904,17 +5764,25 @@ async function renderAdminFechamento(content) {
       ${ineligible.map(w => `<br>• ${escapeHtml(w.nome)} (${catLabel(w.cat)} · ${w.rank}° · ${w.action === 'promoted' ? 'seria promovido' : w.action === 'relegated' ? 'seria rebaixado' : 'permanece'})`).join('')}
     </div>` : '';
 
+  const seasonSelectHtml = seasons.length > 1 ? `
+    <select id="fechamento-season-sel" class="input" style="font-size:13px;max-width:220px;">
+      ${seasons.map(s => `<option value="${s.id}"${s.id === selectedSeason.id ? ' selected' : ''}>${escapeHtml(s.name)}${s.status === 'active' ? ' ✓' : ''}</option>`).join('')}
+    </select>` : '';
+
   content.innerHTML = `
     <div class="section-header">
       <div>
         <h1 class="section-title">Fechamento de Temporada</h1>
-        <p class="section-subtitle">${escapeHtml(activeSeason.name)}</p>
+        <p class="section-subtitle">${escapeHtml(selectedSeason.name)}</p>
       </div>
-      <a href="/api/seasons/${activeSeason.id}/ranking/export.csv"
-         class="btn btn-ghost btn-sm"
-         title="Baixar ranking completo em CSV">
-        ⬇ Exportar CSV
-      </a>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        ${seasonSelectHtml}
+        <a href="/api/seasons/${selectedSeason.id}/ranking/export.csv"
+           class="btn btn-ghost btn-sm"
+           title="Baixar ranking completo em CSV">
+          ⬇ Exportar CSV
+        </a>
+      </div>
     </div>
 
     ${openRoundsBanner}
@@ -4945,7 +5813,9 @@ async function renderAdminFechamento(content) {
       </div>
     </div>
 
-    ${!isClosed ? `
+    ${isClosed ? `
+      <div class="alert alert-info">Temporada encerrada em ${selectedSeason.closed_at || '—'}.</div>
+    ` : isViewingActive ? `
       <div class="fechamento-confirm-box ${openRoundsCount > 0 ? 'fech-blocked' : ''}">
         <p style="font-size:15px;font-weight:700;color:var(--color-accent);margin-bottom:8px;">Confirmar Fechamento</p>
         <p style="font-size:13px;margin-bottom:12px;">
@@ -4961,18 +5831,11 @@ async function renderAdminFechamento(content) {
           </span>
         </div>
         <p id="fechamento-msg" class="hidden" style="margin-top:12px;font-size:13px;"></p>
-      </div>` : `
-      <div class="alert alert-info">Temporada encerrada em ${activeSeason.closed_at || '—'}.</div>`}
-
-    ${closedSeasons.length ? `
-      <div style="margin-top:24px;">
-        <p style="font-size:13px;font-weight:700;color:var(--color-text-muted);margin-bottom:8px;">Temporadas Encerradas</p>
-        ${closedSeasons.map(s => `
-          <div class="card" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <span>${escapeHtml(s.name)}</span>
-            <span class="badge badge-inativo">Encerrada</span>
-          </div>`).join('')}
       </div>` : ''}`;
+
+  content.querySelector('#fechamento-season-sel')?.addEventListener('change', e => {
+    renderAdminFechamento(content, e.target.value);
+  });
 
   content.querySelector('#btn-fechar-temporada')?.addEventListener('click', () => {
     confirmModal(
@@ -5020,12 +5883,12 @@ async function renderAdminLiga(content) {
   const ALL_AWARD_KEYS = Object.keys(AWARD_META);
 
   let ligas = [], allSeasons = [];
-  try {
-    [ligas, allSeasons] = await Promise.all([
-      api('/api/ligas'),
-      api('/api/seasons'),
-    ]);
-  } catch (_) {}
+  const [ligasRes, allSeasonsRes] = await Promise.allSettled([
+    api('/api/ligas'),
+    api('/api/seasons'),
+  ]);
+  if (ligasRes.status     === 'fulfilled') ligas      = ligasRes.value;
+  if (allSeasonsRes.status === 'fulfilled') allSeasons = allSeasonsRes.value;
 
   const year = new Date().getFullYear();
 
@@ -5427,14 +6290,16 @@ async function renderAdminLesoes(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
 
   let athletes = [], seasons = [], injuries = [], guestRequests = [];
-  try {
-    [athletes, seasons] = await Promise.all([api('/api/athletes'), api('/api/seasons')]);
-    injuries     = await api('/api/injuries');
-    guestRequests = await api('/api/guest-requests');
-  } catch (err) {
-    content.innerHTML = `<p class="placeholder-text" style="color:#D94040">Erro: ${escapeHtml(err.message)}</p>`;
-    return;
-  }
+  const [athRes, seaRes, injRes, guestRes] = await Promise.allSettled([
+    api('/api/athletes'),
+    api('/api/seasons'),
+    api('/api/injuries'),
+    api('/api/guest-requests'),
+  ]);
+  if (athRes.status   === 'fulfilled') athletes      = athRes.value;
+  if (seaRes.status   === 'fulfilled') seasons       = seaRes.value;
+  if (injRes.status   === 'fulfilled') injuries      = injRes.value;
+  if (guestRes.status === 'fulfilled') guestRequests = guestRes.value;
 
   const athletesById = Object.fromEntries(athletes.map(a => [a.id, a]));
   const activeSeason = seasons.find(s => s.status === 'active') || seasons[seasons.length - 1];
@@ -6132,7 +6997,9 @@ function _buildGroupHtml(group) {
   const athleteRows = group.athletes.map((a, i) => `
     <div class="history-score-row">
       <span class="history-score-rank">${i + 1}</span>
-      <span class="history-score-name">${escapeHtml(a.nome)}</span>
+      <span class="history-score-name">
+        <a href="#publico/atleta/${a.athlete_id}" style="color:inherit;text-decoration:none;">${escapeHtml(a.nome)}</a>
+      </span>
       <span class="history-score-sets">
         ${(a.sets || []).map(s => `<span class="history-score-set ${_setClass(s)}">${s}</span>`).join('')}
       </span>
@@ -6421,10 +7288,13 @@ async function renderMesaHistorico(content) {
 async function renderPublicoAtleta(container, athleteId) {
   container.innerHTML = `<p class="placeholder-text">Carregando perfil…</p>`;
 
-  let profile;
-  try {
-    profile = await api(`/api/athletes/${athleteId}/public`);
-  } catch (err) {
+  const [profileRes, histRes, rankHistRes] = await Promise.allSettled([
+    api(`/api/athletes/${athleteId}/public`),
+    api(`/api/athletes/${athleteId}/history?limit=10`),
+    api(`/api/athletes/${athleteId}/ranking-history`),
+  ]);
+
+  if (profileRes.status !== 'fulfilled') {
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-state-icon">🎾</div>
@@ -6434,8 +7304,13 @@ async function renderPublicoAtleta(container, athleteId) {
     return;
   }
 
+  const profile = profileRes.value;
+  const matchHistory = histRes.status === 'fulfilled' ? (histRes.value.history || []) : [];
+  const rankHistory  = rankHistRes.status === 'fulfilled' ? (rankHistRes.value.history || []) : [];
+
   const stats = profile.stats || {};
-  const initial = (profile.nome || '?').charAt(0).toUpperCase();
+  const displayNome = profile.apelido || profile.nome || '?';
+  const initial = displayNome.charAt(0).toUpperCase();
   const history = profile.category_history || [];
   const summaries = profile.season_summaries || [];
 
@@ -6469,15 +7344,53 @@ async function renderPublicoAtleta(container, athleteId) {
        </span>`
     : '';
 
+  const _pubRankBadge = rank => {
+    const cls = rank <= 3 ? `rank-${rank}` : '';
+    const label = rank === 1 ? '1º 🥇' : rank === 2 ? '2º 🥈' : rank === 3 ? '3º 🥉' : `${rank}º`;
+    return `<span class="match-rank-badge ${cls}">${label}</span>`;
+  };
+  const matchHistoryHtml = matchHistory.length
+    ? [...matchHistory].reverse().map(h => {
+        let scoresHtml;
+        if (h.set_scores?.length) {
+          const scLine = h.set_scores.map(s => {
+            const sc = s.wo ? 'wo' : s.won ? 'win' : 'loss';
+            const lbl = s.wo ? 'WO' : `${s.score_mine}–${s.score_opp}${s.is_super_tiebreak ? ' STB' : ''}`;
+            return `<span class="match-set-score ${sc}">${lbl}</span>`;
+          }).join('<span style="color:var(--color-text-muted);padding:0 2px;">/</span>');
+          scoresHtml = `<div class="match-sets-row">${scLine}</div>`;
+        } else {
+          const pips = (h.my_sets || []).map(s =>
+            `<span class="match-set-pip ${s === 3 ? 'win' : 'loss'}">${s}</span>`).join('');
+          scoresHtml = `<div class="match-sets-row">${pips}</div>`;
+        }
+        const opponents = (h.group_members || []).map(m => escapeHtml(m.nome)).join(', ');
+        return `
+          <div class="match-card">
+            <div class="match-card-header">
+              <span class="match-round-label">${catLabel(h.cat)} · Rodada ${h.round_number ?? '—'}</span>
+              ${_pubRankBadge(h.rank_in_group)}
+            </div>
+            ${scoresHtml}
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+              <span class="match-opponents">${opponents}</span>
+              <span style="font-size:13px;font-weight:700;color:var(--color-primary);">${h.my_total ?? 0}pts</span>
+            </div>
+          </div>`;
+      }).join('')
+    : `<p style="padding:10px 0;font-size:13px;color:var(--color-text-muted);">Nenhuma partida registrada.</p>`;
+
   container.innerHTML = `
     <p style="margin-bottom:12px;">
       <a href="#publico/ranking" style="font-size:13px;color:var(--color-accent);">← Ranking</a>
     </p>
     <div class="public-profile-card">
       <div class="public-profile-header">
-        <div class="public-profile-avatar" aria-hidden="true">${initial}</div>
+        <div class="public-profile-avatar" aria-hidden="true" style="overflow:hidden;border-radius:50%;">
+          ${avatarHtml(profile.photo_url, displayNome, 64)}
+        </div>
         <div>
-          <div class="public-profile-name">${escapeHtml(profile.nome)}</div>
+          <div class="public-profile-name">${escapeHtml(displayNome)}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
             ${catLabel(profile.current_category)}
             <span class="badge ${profile.status === 'ativo' ? 'badge-ativo' : 'badge-inativo'}">${profile.status}</span>
@@ -6486,11 +7399,12 @@ async function renderPublicoAtleta(container, athleteId) {
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px;">
+      <div style="display:grid;grid-template-columns:repeat(${profile.age != null ? 4 : 3},1fr);gap:10px;margin-bottom:20px;">
         ${[
           ['Rodadas', stats.total_rounds ?? 0],
           ['Pontos',  stats.total_points ?? 0],
           ['Sets W',  stats.total_set_wins ?? 0],
+          ...(profile.age != null ? [['Idade', `${profile.age}a`]] : []),
         ].map(([lbl, val]) => `
           <div style="text-align:center;background:var(--color-bg);border-radius:var(--radius-md);padding:12px 6px;">
             <div style="font-size:22px;font-weight:700;color:var(--color-primary);">${val}</div>
@@ -6502,11 +7416,114 @@ async function renderPublicoAtleta(container, athleteId) {
          color:var(--color-text-muted);margin-bottom:8px;">Temporadas</p>
       ${summaryHtml}
 
+      ${rankHistory.length >= 1 ? (() => {
+        // Group by season+cat for display; show most recent cat's history
+        const latest = rankHistory[rankHistory.length - 1];
+        const sameCatSeason = rankHistory.filter(h => h.cat === latest.cat && h.season_id === latest.season_id);
+        return `
+          <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+             color:var(--color-text-muted);margin:20px 0 8px;">Evolução de Ranking · ${catLabel(latest.cat)}</p>
+          <div style="background:var(--color-bg);border-radius:var(--radius-md);padding:14px 10px 8px;">
+            ${svgRankEvolution(sameCatSeason.slice(-8))}
+            <p style="font-size:10px;color:var(--color-text-muted);text-align:center;margin-top:4px;">
+              Posição por rodada — eixo Y: 1° = topo
+            </p>
+          </div>`;
+      })() : ''}
+
       ${history.length ? `
         <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
            color:var(--color-text-muted);margin:16px 0 8px;">Histórico de Categoria</p>
         ${historyHtml}` : ''}
+
+      <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+         color:var(--color-text-muted);margin:20px 0 8px;">Últimas Partidas</p>
+      ${matchHistoryHtml}
+
+      <p style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+         color:var(--color-text-muted);margin:24px 0 8px;">Comparar com</p>
+      <div class="card" style="padding:var(--space-md);">
+        <input id="h2h-search" class="field-input" placeholder="Buscar atleta…" autocomplete="off"
+               style="margin-bottom:8px;" />
+        <div id="h2h-dropdown" style="display:none;background:var(--color-surface);border:var(--border);
+             border-radius:var(--radius-md);max-height:160px;overflow-y:auto;margin-bottom:8px;"></div>
+        <div id="h2h-result"></div>
+      </div>
     </div>`;
+
+  // Wire H2H search
+  const h2hInput = container.querySelector('#h2h-search');
+  const h2hDropdown = container.querySelector('#h2h-dropdown');
+  const h2hResult = container.querySelector('#h2h-result');
+  let h2hTimer;
+
+  h2hInput?.addEventListener('input', () => {
+    clearTimeout(h2hTimer);
+    const q = h2hInput.value.trim();
+    if (q.length < 2) { h2hDropdown.style.display = 'none'; return; }
+    h2hTimer = setTimeout(async () => {
+      try {
+        const res = await api(`/api/search?q=${encodeURIComponent(q)}`);
+        const athletes = (res.athletes || []).filter(a => a.id !== athleteId).slice(0, 6);
+        if (!athletes.length) { h2hDropdown.style.display = 'none'; return; }
+        h2hDropdown.innerHTML = athletes.map(a => `
+          <div class="h2h-option" data-id="${escapeHtml(a.id)}" data-nome="${escapeHtml(a.nome || a.apelido || '?')}"
+               style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:var(--border);">
+            ${escapeHtml(a.apelido || a.nome || '?')}
+            <span style="color:var(--color-text-muted);font-size:11px;margin-left:6px;">${catLabel(a.current_category)}</span>
+          </div>`).join('');
+        h2hDropdown.style.display = 'block';
+        h2hDropdown.querySelectorAll('.h2h-option').forEach(el => {
+          el.addEventListener('click', () => _loadH2H(el.dataset.id, el.dataset.nome));
+        });
+      } catch (_) {}
+    }, 280);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!h2hDropdown?.contains(e.target) && e.target !== h2hInput) {
+      h2hDropdown && (h2hDropdown.style.display = 'none');
+    }
+  }, { once: false });
+
+  async function _loadH2H(otherId, otherNome) {
+    h2hDropdown.style.display = 'none';
+    h2hInput.value = otherNome;
+    h2hResult.innerHTML = `<p style="font-size:12px;color:var(--color-text-muted);">Carregando…</p>`;
+    try {
+      const h2h = await api(`/api/h2h/${athleteId}/${otherId}`);
+      const s = h2h.summary;
+      const na = h2h.athlete_a.nome;
+      const nb = h2h.athlete_b.nome;
+      const pct = s.encounters > 0 ? Math.round((s.a_wins / s.encounters) * 100) : 0;
+      h2hResult.innerHTML = `
+        <div style="text-align:center;margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:13px;font-weight:700;">${escapeHtml(na)}</span>
+            <span style="font-size:11px;color:var(--color-text-muted);">${s.encounters} grupo${s.encounters !== 1 ? 's' : ''}</span>
+            <span style="font-size:13px;font-weight:700;">${escapeHtml(nb)}</span>
+          </div>
+          <div style="display:flex;gap:6px;justify-content:center;margin-bottom:4px;">
+            <span style="font-size:28px;font-weight:800;color:var(--color-primary);">${s.a_wins}</span>
+            <span style="font-size:22px;color:var(--color-text-muted);align-self:center;">–</span>
+            <span style="font-size:28px;font-weight:800;color:var(--color-accent);">${s.b_wins}</span>
+          </div>
+          ${s.draws ? `<p style="font-size:11px;color:var(--color-text-muted);">${s.draws} empate${s.draws !== 1 ? 's' : ''}</p>` : ''}
+          <p style="font-size:11px;color:var(--color-text-muted);margin-top:2px;">
+            Sets diretos: ${s.direct_sets_a} × ${s.direct_sets_b}
+          </p>
+        </div>
+        ${h2h.encounters.slice(0, 5).map(e => `
+          <div class="public-stat-row" style="padding:6px 0;">
+            <span style="color:var(--color-text-muted);font-size:12px;">Rod.${e.round_number ?? '—'} ${catLabel(e.cat)}</span>
+            <span style="font-size:13px;font-weight:700;color:${e.winner === 'a' ? 'var(--color-primary)' : e.winner === 'b' ? 'var(--color-accent)' : 'var(--color-text-muted)'};">
+              ${e.total_a} × ${e.total_b}
+            </span>
+          </div>`).join('')}`;
+    } catch (_) {
+      h2hResult.innerHTML = `<p style="font-size:12px;color:#D94040;">Erro ao carregar H2H.</p>`;
+    }
+  }
 }
 
 
@@ -6528,7 +7545,8 @@ async function renderMesaPerfil(content) {
   const stats = profile.stats || {};
   const history = profile.category_history || [];
   const summaries = profile.season_summaries || [];
-  const initial = (profile.nome || '?').charAt(0).toUpperCase();
+  const displayNomeMesa = profile.apelido || profile.nome || '?';
+  const initial = displayNomeMesa.charAt(0).toUpperCase();
 
   const historyHtml = history.length
     ? history.map(h => {
@@ -6569,14 +7587,36 @@ async function renderMesaPerfil(content) {
   content.innerHTML = `
     <div style="padding:16px;">
       <div class="profile-header">
-        <div class="profile-avatar" aria-hidden="true">${initial}</div>
+        <div class="profile-avatar" aria-hidden="true" style="overflow:hidden;border-radius:50%;" id="perfil-avatar-wrap">
+          ${avatarHtml(profile.photo_url, displayNomeMesa, 64)}
+        </div>
         <div>
-          <div class="profile-name">${escapeHtml(profile.nome)}</div>
+          <div class="profile-name">${escapeHtml(displayNomeMesa)}</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             ${catLabel(profile.current_category)}
             <span class="badge ${profile.status === 'ativo' ? 'badge-ativo' : 'badge-inativo'}">${profile.status}</span>
           </div>
         </div>
+      </div>
+
+      <p class="profile-section-title">Foto de Perfil</p>
+      <div class="card" style="padding:var(--space-md);margin-bottom:16px;">
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px;">
+          <div id="photo-preview-wrap" style="flex-shrink:0;">
+            ${avatarHtml(profile.photo_url, displayNomeMesa, 60)}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <label for="photo-file-input" class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0;">
+              📷 Alterar foto
+            </label>
+            <input id="photo-file-input" type="file" accept="image/jpeg,image/png,image/webp" style="display:none;" />
+            ${profile.photo_url
+              ? `<button id="btn-remove-photo" class="btn btn-ghost btn-sm" style="color:#D94040;">✕ Remover foto</button>`
+              : ''}
+          </div>
+        </div>
+        <p style="font-size:11px;color:var(--color-text-muted);margin:0 0 4px;">JPEG · PNG · WebP · máx 2 MB</p>
+        <p id="photo-msg" class="hidden" style="font-size:13px;margin-top:6px;"></p>
       </div>
 
       <div class="profile-stats-grid">
@@ -6592,6 +7632,11 @@ async function renderMesaPerfil(content) {
           <div class="profile-stat-value">${stats.total_set_wins}</div>
           <div class="profile-stat-label">Sets Ganhos</div>
         </div>
+        ${profile.age != null ? `
+        <div class="profile-stat-card">
+          <div class="profile-stat-value">${profile.age}a</div>
+          <div class="profile-stat-label">Idade</div>
+        </div>` : ''}
       </div>
 
       <p class="profile-section-title">Temporadas Jogadas</p>
@@ -6653,6 +7698,27 @@ async function renderMesaPerfil(content) {
           Declarar Afastamento
         </button>
         <span id="mesa-inj-msg" style="font-size:13px;margin-left:8px;"></span>
+      </div>
+
+      <p class="profile-section-title">Editar Perfil</p>
+      <div class="card" style="padding:var(--space-md);">
+        <form id="form-perfil-edit" style="display:flex;flex-direction:column;gap:12px;">
+          <div class="form-group">
+            <label class="form-label" for="perfil-apelido">Apelido</label>
+            <input id="perfil-apelido" type="text" class="form-input"
+              value="${escapeHtml(profile.apelido || '')}"
+              placeholder="Seu apelido" maxlength="40" required />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="perfil-birth-date">Data de nascimento</label>
+            <input id="perfil-birth-date" type="date" class="form-input"
+              value="${escapeHtml(profile.birth_date || '')}" />
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button type="submit" class="btn btn-primary btn-sm">Salvar alterações</button>
+            <span id="perfil-edit-msg" style="font-size:13px;display:none;"></span>
+          </div>
+        </form>
       </div>
 
       <p class="profile-section-title">Alterar PIN</p>
@@ -6743,6 +7809,82 @@ async function renderMesaPerfil(content) {
   });
   content.querySelector('#btn-share-wa').href =
     `https://wa.me/?text=${encodeURIComponent('Acompanhe meu perfil no SuperRank: ' + shareUrl)}`;
+
+  // Photo upload
+  const photoInput = content.querySelector('#photo-file-input');
+  const photoMsg   = content.querySelector('#photo-msg');
+  const photoPreview = content.querySelector('#photo-preview-wrap');
+  const headerAvatar = content.querySelector('#perfil-avatar-wrap');
+
+  function showPhotoMsg(text, ok) {
+    photoMsg.textContent = text;
+    photoMsg.style.color = ok ? 'var(--color-cat-c)' : '#D94040';
+    photoMsg.classList.remove('hidden');
+  }
+
+  photoInput?.addEventListener('change', async () => {
+    const file = photoInput.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { showPhotoMsg('Arquivo muito grande. Máximo 2 MB.', false); return; }
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) { showPhotoMsg('Formato inválido. Use JPEG, PNG ou WebP.', false); return; }
+
+    // Local preview
+    const localUrl = URL.createObjectURL(file);
+    if (photoPreview) photoPreview.innerHTML = avatarHtml(localUrl, displayNomeMesa, 60);
+    if (headerAvatar) headerAvatar.innerHTML = avatarHtml(localUrl, displayNomeMesa, 64);
+
+    const fd = new FormData();
+    fd.append('photo', file);
+    photoMsg.classList.add('hidden');
+    try {
+      const res = await api(`/api/athletes/${profile.id}/photo`, { method: 'POST', body: fd });
+      showPhotoMsg('Foto salva com sucesso!', true);
+      // Update hero avatar in mesa home if visible
+      document.querySelectorAll('.mesa-hero-card img, .mesa-hero-card div[style*="border-radius:50%"]').forEach(el => {
+        el.parentElement.innerHTML = avatarHtml(res.photo_url, displayNomeMesa, 44);
+      });
+    } catch (err) {
+      showPhotoMsg(`Erro: ${err.message}`, false);
+      if (photoPreview) photoPreview.innerHTML = avatarHtml(profile.photo_url, displayNomeMesa, 60);
+      if (headerAvatar) headerAvatar.innerHTML = avatarHtml(profile.photo_url, displayNomeMesa, 64);
+    }
+    URL.revokeObjectURL(localUrl);
+  });
+
+  content.querySelector('#btn-remove-photo')?.addEventListener('click', () => {
+    confirmModal('Remover foto', 'Remover sua foto de perfil?', async () => {
+      try {
+        await api(`/api/athletes/${profile.id}/photo`, { method: 'DELETE' });
+        showToast('Foto removida.', 'success');
+        await renderMesaPerfil(content);
+      } catch (err) {
+        showToast(`Erro: ${err.message}`, 'error');
+      }
+    }, 'Remover');
+  });
+
+  content.querySelector('#form-perfil-edit').addEventListener('submit', async e => {
+    e.preventDefault();
+    const apelido = content.querySelector('#perfil-apelido').value.trim();
+    const birth_date = content.querySelector('#perfil-birth-date').value || null;
+    const msgEl = content.querySelector('#perfil-edit-msg');
+    msgEl.style.display = 'none';
+    try {
+      await api('/api/mesa/profile', { method: 'PUT', body: { apelido, birth_date } });
+      profile.apelido = apelido;
+      profile.birth_date = birth_date;
+      content.querySelector('.profile-name').textContent = apelido;
+      msgEl.textContent = 'Alterações salvas!';
+      msgEl.style.color = 'var(--color-cat-c)';
+      msgEl.style.display = '';
+      showToast('Perfil atualizado!', 'success');
+    } catch (err) {
+      msgEl.textContent = err.message;
+      msgEl.style.color = '#D94040';
+      msgEl.style.display = '';
+    }
+  });
 
   content.querySelector('#form-pin').addEventListener('submit', async e => {
     e.preventDefault();
@@ -6836,7 +7978,12 @@ async function renderAdminRelatorio(content, selectedSeasonId = null) {
         <h1 class="section-title">Relatório de Temporada</h1>
         <p class="section-subtitle">${escapeHtml(selectedSeason.name)}</p>
       </div>
-      ${seasonSelectHtml}
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        ${seasonSelectHtml}
+        <button id="btn-export-relatorio" class="btn btn-ghost btn-sm" title="Copiar relatório formatado">
+          📋 Exportar
+        </button>
+      </div>
     </div>
 
     <div class="report-kpi-grid">
@@ -6879,6 +8026,46 @@ async function renderAdminRelatorio(content, selectedSeasonId = null) {
 
   content.querySelector('#relatorio-season-sel')?.addEventListener('change', e => {
     renderAdminRelatorio(content, e.target.value);
+  });
+
+  content.querySelector('#btn-export-relatorio')?.addEventListener('click', () => {
+    const lines = [
+      `RELATÓRIO — ${selectedSeason.name}`,
+      `Gerado em: ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`,
+      '',
+      'KPIs',
+      `Rodadas: ${report.total_rounds}`,
+      `Com resultado: ${report.rounds_with_results}`,
+      `Resultados: ${report.total_confirmed_results}`,
+      `Participaram: ${report.athletes_who_played}/${report.total_titulares}`,
+      `Participação: ${report.participation_rate}%`,
+      `Média de pts: ${report.avg_points_per_athlete}`,
+    ];
+    if (report.most_active) {
+      lines.push('', 'ATLETA MAIS ATIVO');
+      lines.push(`${report.most_active.nome} — ${report.most_active.rounds} rod. · ${report.most_active.total_points}pts`);
+    }
+    const topCats = ['A', 'B', 'C', 'D'].map(cat => {
+      const e = report.top_per_cat[cat];
+      return e ? `[${cat}] ${e.nome} — ${e.total_points}pts · ${e.rounds} rod. · ${e.set_wins} sets W` : null;
+    }).filter(Boolean);
+    if (topCats.length) {
+      lines.push('', 'MELHOR POR CATEGORIA');
+      lines.push(...topCats);
+    }
+    if ((report.athlete_stats || []).length) {
+      lines.push('', 'PARTICIPAÇÃO GERAL');
+      report.athlete_stats.forEach((e, i) => {
+        lines.push(`${String(i + 1).padStart(2)}. ${e.nome} (${e.category}) — ${e.total_points}pts · ${e.rounds} rod. · ${e.set_wins} sets W`);
+      });
+    }
+    const text = lines.join('\n');
+    navigator.clipboard?.writeText(text).catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    });
+    showToast('Relatório copiado para a área de transferência!', 'success');
   });
 }
 
@@ -7033,13 +8220,15 @@ async function renderAdminContestacoes(content) {
       btn.disabled = true;
       btn.textContent = 'Carregando…';
       try {
-        const [results, athletes] = await Promise.all([
+        const [resultsRes, athletesRes] = await Promise.allSettled([
           api(`/api/rounds/${roundId}/results`),
           api('/api/athletes'),
         ]);
-        const result = results.find(r => r.id === id);
+        if (resultsRes.status  !== 'fulfilled') throw resultsRes.reason;
+        if (athletesRes.status !== 'fulfilled') throw athletesRes.reason;
+        const result = resultsRes.value.find(r => r.id === id);
         if (!result) throw new Error('Resultado não encontrado');
-        const athletesById = Object.fromEntries(athletes.map(a => [a.id, a]));
+        const athletesById = Object.fromEntries(athletesRes.value.map(a => [a.id, a]));
         openScoreForm(roundId, cat, gi, result.group, result.sets, athletesById,
           () => renderAdminContestacoes(content));
       } catch (err) {
@@ -7086,21 +8275,68 @@ async function renderAdminAuditoria(content) {
         <h1 class="section-title">Auditoria</h1>
         <p class="section-subtitle">Histórico de ações administrativas</p>
       </div>
-      <button id="btn-refresh-audit" class="btn btn-ghost btn-sm">↺ Atualizar</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input id="audit-search" class="input" type="search" placeholder="Buscar ator…"
+          style="font-size:13px;max-width:150px;" autocomplete="off">
+        <select id="audit-action-sel" class="input" style="font-size:13px;max-width:200px;">
+          <option value="">Todas as ações</option>
+          ${Object.entries(ACTION_LABELS).map(([k, v]) => `<option value="${k}">${escapeHtml(v)}</option>`).join('')}
+        </select>
+        <button id="btn-refresh-audit" class="btn btn-ghost btn-sm">↺ Atualizar</button>
+      </div>
     </div>
     <div id="audit-body"><p class="placeholder-text">Carregando…</p></div>`;
 
   const body = content.querySelector('#audit-body');
+  let allEntries = [];
+
+  function buildRow(e) {
+    const icon  = ACTION_ICONS[e.action]  || '•';
+    const label = ACTION_LABELS[e.action] || e.action;
+    const det   = Object.entries(e.details || {})
+      .filter(([k]) => !['result_id','round_id','season_id'].includes(k))
+      .map(([k, v]) => `${k}: <strong>${escapeHtml(String(v))}</strong>`)
+      .join(' · ');
+    const ts = e.created_at
+      ? new Date(e.created_at).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' })
+      : '—';
+    return `<tr>
+      <td style="color:var(--color-text-muted);font-size:12px;white-space:nowrap;">${ts}</td>
+      <td style="font-size:16px;text-align:center;">${icon}</td>
+      <td style="font-weight:500;">${escapeHtml(label)}</td>
+      <td style="font-size:12px;color:var(--color-text-muted);">${det}</td>
+      <td style="font-size:12px;color:var(--color-text-muted);">${escapeHtml(e.actor || 'admin')}</td>
+    </tr>`;
+  }
+
+  function paintFiltered() {
+    const actionFilter = content.querySelector('#audit-action-sel')?.value || '';
+    const searchFilter = (content.querySelector('#audit-search')?.value || '').toLowerCase().trim();
+    const filtered = allEntries.filter(e => {
+      const actionMatch  = !actionFilter || e.action === actionFilter;
+      const actorMatch   = !searchFilter || (e.actor || '').toLowerCase().includes(searchFilter);
+      return actionMatch && actorMatch;
+    });
+    if (!filtered.length) {
+      body.innerHTML = `<div style="text-align:center;padding:32px;color:var(--color-text-muted);">Nenhum resultado para os filtros selecionados.</div>`;
+      return;
+    }
+    body.innerHTML = `
+      <div class="card" style="padding:0;overflow:hidden;">
+        <table class="data-table" style="width:100%;">
+          <thead><tr><th>Quando</th><th></th><th>Ação</th><th>Detalhes</th><th>Por</th></tr></thead>
+          <tbody>${filtered.map(buildRow).join('')}</tbody>
+        </table>
+      </div>`;
+  }
 
   async function loadAndPaint() {
     body.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
-    let entries = [];
-    try { entries = await api('/api/admin/audit?limit=200'); } catch (err) {
+    try { allEntries = await api('/api/admin/audit?limit=200'); } catch (err) {
       body.innerHTML = `<div class="alert alert-error">Erro ao carregar: ${escapeHtml(err.message)}</div>`;
       return;
     }
-
-    if (!entries.length) {
+    if (!allEntries.length) {
       body.innerHTML = `
         <div style="text-align:center;padding:48px 20px;">
           <div style="font-size:40px;margin-bottom:12px;">📋</div>
@@ -7108,43 +8344,11 @@ async function renderAdminAuditoria(content) {
         </div>`;
       return;
     }
-
-    const rows = entries.map(e => {
-      const icon  = ACTION_ICONS[e.action]  || '•';
-      const label = ACTION_LABELS[e.action] || e.action;
-      const det   = Object.entries(e.details || {})
-        .filter(([k]) => !['result_id','round_id','season_id'].includes(k))
-        .map(([k, v]) => `${k}: <strong>${escapeHtml(String(v))}</strong>`)
-        .join(' · ');
-      const ts = e.created_at
-        ? new Date(e.created_at).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo' })
-        : '—';
-      return `<tr>
-        <td style="color:var(--color-text-muted);font-size:12px;white-space:nowrap;">${ts}</td>
-        <td style="font-size:16px;text-align:center;">${icon}</td>
-        <td style="font-weight:500;">${escapeHtml(label)}</td>
-        <td style="font-size:12px;color:var(--color-text-muted);">${det}</td>
-        <td style="font-size:12px;color:var(--color-text-muted);">${escapeHtml(e.actor || 'admin')}</td>
-      </tr>`;
-    }).join('');
-
-    body.innerHTML = `
-      <div class="card" style="padding:0;overflow:hidden;">
-        <table class="data-table" style="width:100%;">
-          <thead>
-            <tr>
-              <th>Quando</th>
-              <th></th>
-              <th>Ação</th>
-              <th>Detalhes</th>
-              <th>Por</th>
-            </tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`;
+    paintFiltered();
   }
 
+  content.querySelector('#audit-action-sel').addEventListener('change', paintFiltered);
+  content.querySelector('#audit-search').addEventListener('input', paintFiltered);
   content.querySelector('#btn-refresh-audit').addEventListener('click', loadAndPaint);
   await loadAndPaint();
 }
@@ -7188,7 +8392,17 @@ async function renderAdminConfig(content) {
       <hr style="border:none;border-top:1px solid var(--color-border);margin:20px 0;">
 
       <p class="config-section-label">📱 Comunicação</p>
-      ${field('cfg-admin-wa',   'WhatsApp do Admin (DDI + DDD + número)', settings.admin_whatsapp, 'Ex.: 5575999998888 — sem espaços ou traços', 'tel', 'numeric')}
+      <div class="form-group">
+        <label class="field-label">WhatsApp do Admin</label>
+        ${phoneInputHtml(settings.admin_whatsapp || '')}
+        <p style="font-size:11px;color:var(--color-text-muted);margin-top:3px;">Número de contato exibido para atletas</p>
+      </div>
+
+      <hr style="border:none;border-top:1px solid var(--color-border);margin:20px 0;">
+
+      <p class="config-section-label">💳 Pagamentos</p>
+      ${field('cfg-pay-amount',   'Mensalidade (R$)',  settings.payment_amount  ?? '',  'Valor cobrado por temporada · 0 = sem cobrança', 'number', 'decimal')}
+      ${field('cfg-pay-due-day',  'Vencimento (dia)',  settings.payment_due_day ?? '10', 'Dia do mês limite para pagamento (1–28)', 'number', 'numeric')}
 
       <div style="display:flex;gap:10px;margin-top:20px;align-items:center;">
         <button id="btn-save-config" class="btn btn-primary">Salvar configurações</button>
@@ -7196,15 +8410,22 @@ async function renderAdminConfig(content) {
       </div>
     </div>`;
 
+  const phoneLocalEl = content.querySelector('[name="phone_local"]');
+  if (phoneLocalEl) applyPhoneMask(phoneLocalEl);
+
   content.querySelector('#btn-save-config').addEventListener('click', async () => {
     const btn = content.querySelector('#btn-save-config');
     const fb  = content.querySelector('#cfg-feedback');
     btn.disabled = true; btn.textContent = 'Salvando…';
+    const countryCode  = content.querySelector('[name="phone_country"]')?.value || '55';
+    const localDigits  = (content.querySelector('[name="phone_local"]')?.value || '').replace(/\D/g, '');
     const body = {
-      club_name:      content.querySelector('#cfg-club-name').value.trim(),
-      court_location: content.querySelector('#cfg-location').value.trim(),
-      app_url:        content.querySelector('#cfg-app-url').value.trim(),
-      admin_whatsapp: content.querySelector('#cfg-admin-wa').value.replace(/\D/g, ''),
+      club_name:        content.querySelector('#cfg-club-name').value.trim(),
+      court_location:   content.querySelector('#cfg-location').value.trim(),
+      app_url:          content.querySelector('#cfg-app-url').value.trim(),
+      admin_whatsapp:   localDigits ? countryCode + localDigits : '',
+      payment_amount:   parseFloat(content.querySelector('#cfg-pay-amount')?.value || '0') || 0,
+      payment_due_day:  parseInt(content.querySelector('#cfg-pay-due-day')?.value || '10', 10) || 10,
     };
     try {
       await api('/api/admin/settings', { method: 'PUT', body });
@@ -7268,7 +8489,7 @@ function renderPublicoBusca(container) {
           ${data.athletes.map(a => `
             <a href="#publico/atleta/${a.id}" class="search-result-item">
               <span class="search-result-item-name">${escapeHtml(a.nome)}</span>
-              <span class="search-result-item-sub">${catLabel(a.current_category)} · ${a.status}</span>
+              <span class="search-result-item-sub">${catLabel(a.current_category)}${a.status && a.status !== 'active' ? ` · <span class="badge badge-inativo">${escapeHtml(a.status)}</span>` : ''}</span>
             </a>`).join('')}
         </div>`;
       }
@@ -7444,4 +8665,690 @@ async function renderAdminPendencias(content) {
         '#admin/contestacoes', 'Ver contestações')}
     ${roundCard}
     ${overdueCard}`;
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Gestão de Admins
+// ---------------------------------------------------------------------------
+
+async function renderAdminAdmins(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+  let admins = [];
+  try {
+    const data = await api('/api/admins');
+    admins = Array.isArray(data) ? data : (data.data || []);
+  } catch (e) {
+    renderErrorState(content, e.message, () => renderAdminAdmins(content));
+    return;
+  }
+
+  function roleLabel(r) {
+    return r === 'super'
+      ? '<span class="badge badge-titular">Super</span>'
+      : '<span class="badge badge-reserva">Staff</span>';
+  }
+
+  function buildTable() {
+    if (!admins.length) return '<p class="placeholder-text">Nenhum administrador cadastrado.</p>';
+    return `
+      <table class="data-table">
+        <thead><tr>
+          <th>Nome</th><th>Username</th><th>Role</th><th>Último Login</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${admins.map(a => `
+          <tr>
+            <td>${escapeHtml(a.nome)}</td>
+            <td><code>${escapeHtml(a.username)}</code></td>
+            <td>${roleLabel(a.role)}</td>
+            <td style="font-size:13px;color:var(--color-text-muted)">${a.last_login ? fmtDate(a.last_login) : '—'}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-sm btn-ghost" data-edit="${escapeHtml(a.id)}" title="Editar">✏️</button>
+              <button class="btn btn-sm btn-ghost" data-del="${escapeHtml(a.id)}"
+                      data-name="${escapeHtml(a.nome)}" title="Remover"
+                      style="color:var(--color-danger)">🗑</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  content.innerHTML = `
+    <div class="section-header">
+      <div>
+        <h1 class="section-title">Administradores</h1>
+        <p class="section-subtitle">${admins.length} admin(s) cadastrado(s)</p>
+      </div>
+      <button id="btn-admin-novo" class="btn btn-primary btn-sm">+ Novo Admin</button>
+    </div>
+    <div id="admins-table-wrap">${buildTable()}</div>`;
+
+  function openAdminModal(admin = null) {
+    const isEdit = !!admin;
+    const modalTitle = isEdit ? 'Editar Admin' : 'Novo Admin';
+    const bodyHtml = `
+      <div class="form-group">
+        <label class="field-label">Nome</label>
+        <input id="m-nome" class="field-input" value="${isEdit ? escapeHtml(admin.nome) : ''}" placeholder="Nome completo" />
+      </div>
+      ${!isEdit ? `<div class="form-group">
+        <label class="field-label">Username</label>
+        <input id="m-username" class="field-input" value="" placeholder="admin2" autocomplete="off" />
+      </div>` : ''}
+      <div class="form-group">
+        <label class="field-label">Senha${isEdit ? ' <span style="font-weight:400;color:var(--color-text-muted)">(deixe vazio para manter)</span>' : ''}</label>
+        <input id="m-password" type="password" class="field-input"
+               placeholder="${isEdit ? '••••••••' : 'mínimo 6 caracteres'}" autocomplete="new-password" />
+      </div>
+      <div class="form-group">
+        <label class="field-label">Role</label>
+        <select id="m-role" class="field-input">
+          <option value="super"${admin?.role === 'super' || !isEdit ? ' selected' : ''}>Super Admin</option>
+          <option value="staff"${admin?.role === 'staff' ? ' selected' : ''}>Staff</option>
+        </select>
+      </div>`;
+    const footerHtml = `
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btn-save-admin" style="margin-left:8px;">${isEdit ? 'Salvar' : 'Criar'}</button>`;
+
+    openModal(modalTitle, bodyHtml, footerHtml);
+
+    document.getElementById('btn-save-admin').addEventListener('click', async () => {
+      const nome = document.getElementById('m-nome').value.trim();
+      const username = isEdit ? admin.username : (document.getElementById('m-username')?.value.trim() || '');
+      const password = document.getElementById('m-password').value;
+      const role = document.getElementById('m-role').value;
+      if (!nome) { showToast('Nome obrigatório', 'error'); return; }
+      if (!isEdit && !username) { showToast('Username obrigatório', 'error'); return; }
+      if (!isEdit && !password) { showToast('Senha obrigatória', 'error'); return; }
+      try {
+        if (isEdit) {
+          const payload = { nome, role };
+          if (password) payload.password = password;
+          await api(`/api/admins/${admin.id}`, { method: 'PUT', body: payload });
+        } else {
+          await api('/api/admins', { method: 'POST', body: { nome, username, password, role } });
+        }
+        closeModal();
+        showToast(isEdit ? 'Admin atualizado!' : 'Admin criado!', 'success');
+        await renderAdminAdmins(content);
+      } catch (e) {
+        showToast(e.message, 'error');
+      }
+    });
+  }
+
+  content.querySelector('#btn-admin-novo')?.addEventListener('click', () => openAdminModal());
+
+  content.querySelectorAll('[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const a = admins.find(x => x.id === btn.dataset.edit);
+      if (a) openAdminModal(a);
+    });
+  });
+
+  content.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      confirmModal(
+        'Remover Admin',
+        `Remover "${btn.dataset.name}"? Esta ação não pode ser desfeita.`,
+        async () => {
+          try {
+            await api(`/api/admins/${btn.dataset.del}`, { method: 'DELETE' });
+            showToast('Admin removido.', 'success');
+            await renderAdminAdmins(content);
+          } catch (e) {
+            showToast(e.message, 'error');
+          }
+        },
+        'Remover'
+      );
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Admin: WhatsApp em Lote
+// ---------------------------------------------------------------------------
+
+async function renderAdminWhatsapp(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+
+  let templates = [], athletes = [];
+  try {
+    const [tplRes, athRes] = await Promise.all([
+      api('/api/whatsapp/templates'),
+      api('/api/athletes'),
+    ]);
+    templates = tplRes || [];
+    athletes  = (Array.isArray(athRes) ? athRes : (athRes.data || [])).filter(a => a.telefone);
+  } catch (e) {
+    renderErrorState(content, e.message, () => renderAdminWhatsapp(content));
+    return;
+  }
+
+  let selectedKey    = templates[0]?.key || 'custom';
+  let filterCat      = '';
+  let filterStatus   = 'ativo';
+  let composeResults = null;
+
+  function getTpl() { return templates.find(t => t.key === selectedKey) || templates[0]; }
+
+  function filteredAthletes() {
+    return athletes.filter(a => {
+      if (filterCat    && a.current_category !== filterCat) return false;
+      if (filterStatus && a.status           !== filterStatus) return false;
+      return true;
+    });
+  }
+
+  function previewText(extraVars = {}) {
+    const tpl = getTpl();
+    if (!tpl) return '';
+    let text = tpl.text || '';
+    (tpl.extra_vars || []).forEach(k => {
+      text = text.replaceAll(`{${k}}`, extraVars[k] || `{${k}}`);
+    });
+    return text.replaceAll('{nome}', '[nome do atleta]');
+  }
+
+  function extraVarInputsHtml() {
+    const tpl = getTpl();
+    return (tpl?.extra_vars || []).map(v => `
+      <div class="form-group" style="margin-bottom:8px;">
+        <label class="field-label" style="font-size:12px;text-transform:capitalize;">${v.replace(/_/g,' ')}</label>
+        <input id="wa-var-${v}" class="field-input wa-var" data-var="${v}"
+               placeholder="${v}" style="height:32px;font-size:13px;" />
+      </div>`).join('');
+  }
+
+  function getExtraVars() {
+    const vars = {};
+    content.querySelectorAll('.wa-var').forEach(inp => { vars[inp.dataset.var] = inp.value.trim(); });
+    return vars;
+  }
+
+  function render() {
+    const filtered = filteredAthletes();
+    const tpl      = getTpl();
+    content.innerHTML = `
+      <div class="section-header">
+        <div>
+          <h1 class="section-title">WhatsApp em Lote</h1>
+          <p class="section-subtitle">Gere links de envio para grupos de atletas</p>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btn-wa-hist">📋 Histórico</button>
+      </div>
+
+      <div class="card" style="padding:16px;margin-bottom:16px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;align-items:end;">
+          <div class="form-group" style="margin:0;">
+            <label class="field-label">Template</label>
+            <select id="wa-tpl-sel" class="field-input">
+              ${templates.map(t => `<option value="${t.key}"${t.key===selectedKey?' selected':''}>${t.label}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="field-label">Categoria</label>
+            <select id="wa-cat-sel" class="field-input">
+              <option value="">Todas</option>
+              ${['A','B','C','D'].map(c=>`<option value="${c}"${filterCat===c?' selected':''}>${c}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="field-label">Status</label>
+            <select id="wa-status-sel" class="field-input">
+              <option value="">Todos</option>
+              <option value="ativo"${filterStatus==='ativo'?' selected':''}>Ativo</option>
+              <option value="inativo"${filterStatus==='inativo'?' selected':''}>Inativo</option>
+            </select>
+          </div>
+        </div>
+        <div id="wa-extra-wrap" style="margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;">
+          ${extraVarInputsHtml()}
+        </div>
+        <div style="margin-top:14px;padding:10px 12px;background:var(--color-surface-2);border-radius:8px;">
+          <p style="font-size:11px;color:var(--color-text-muted);margin:0 0 4px;">Preview</p>
+          <p id="wa-preview" style="font-size:13px;line-height:1.6;margin:0;white-space:pre-wrap;color:var(--color-text);">${escapeHtml(previewText())}</p>
+        </div>
+        <div style="margin-top:14px;display:flex;align-items:center;gap:12px;">
+          <button id="btn-wa-compor" class="btn btn-primary">
+            Gerar Links (${filtered.length} atleta${filtered.length!==1?'s':''})
+          </button>
+          <span style="font-size:12px;color:var(--color-text-muted);">${athletes.length - filtered.length} sem telefone ou filtrado</span>
+        </div>
+      </div>
+
+      <div id="wa-results-wrap">
+        ${composeResults !== null ? buildResultsHtml() : '<p class="placeholder-text" style="font-size:13px;">Configure acima e clique em Gerar Links.</p>'}
+      </div>`;
+
+    wireEvents();
+  }
+
+  function buildResultsHtml() {
+    if (!composeResults?.length) {
+      return `<p class="placeholder-text" style="font-size:13px;">Nenhum atleta com telefone nos filtros selecionados.</p>`;
+    }
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <p style="font-size:13px;color:var(--color-text-muted);margin:0;">${composeResults.length} link(s) gerado(s)</p>
+        <button id="btn-wa-reg" class="btn btn-sm btn-ghost">✅ Registrar Envio</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:32px;"><input type="checkbox" id="wa-chk-all" checked title="Selecionar todos" /></th>
+            <th>Atleta</th><th>Cat</th><th>Telefone</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${composeResults.map(r => `
+            <tr>
+              <td><input type="checkbox" class="wa-chk" value="${r.athlete_id}" checked /></td>
+              <td style="font-size:13px;">${escapeHtml(r.nome)}</td>
+              <td>${catLabel(r.cat || '')}</td>
+              <td style="font-size:12px;color:var(--color-text-muted);">+${r.phone}</td>
+              <td>
+                <a href="${r.wa_url}" target="_blank" rel="noopener noreferrer"
+                   class="btn btn-sm btn-primary" style="text-decoration:none;">📱 Abrir</a>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function wireEvents() {
+    content.querySelector('#btn-wa-hist')?.addEventListener('click', renderHistorico);
+
+    content.querySelector('#wa-tpl-sel')?.addEventListener('change', e => {
+      selectedKey = e.target.value;
+      content.querySelector('#wa-extra-wrap').innerHTML = extraVarInputsHtml();
+      content.querySelectorAll('.wa-var').forEach(inp => inp.addEventListener('input', refreshPreview));
+      refreshPreview();
+      refreshComposeBtn();
+    });
+
+    content.querySelector('#wa-cat-sel')?.addEventListener('change', e => {
+      filterCat = e.target.value; refreshComposeBtn();
+    });
+    content.querySelector('#wa-status-sel')?.addEventListener('change', e => {
+      filterStatus = e.target.value; refreshComposeBtn();
+    });
+
+    content.querySelectorAll('.wa-var').forEach(inp => inp.addEventListener('input', refreshPreview));
+
+    content.querySelector('#btn-wa-compor')?.addEventListener('click', doCompose);
+
+    content.querySelector('#wa-chk-all')?.addEventListener('change', e => {
+      content.querySelectorAll('.wa-chk').forEach(cb => cb.checked = e.target.checked);
+    });
+
+    content.querySelector('#btn-wa-reg')?.addEventListener('click', doRegistrar);
+  }
+
+  function refreshPreview() {
+    const el = content.querySelector('#wa-preview');
+    if (el) el.textContent = previewText(getExtraVars());
+  }
+
+  function refreshComposeBtn() {
+    const btn = content.querySelector('#btn-wa-compor');
+    const n   = filteredAthletes().length;
+    if (btn) btn.textContent = `Gerar Links (${n} atleta${n!==1?'s':''})`;
+  }
+
+  async function doCompose() {
+    const btn = content.querySelector('#btn-wa-compor');
+    if (btn) { btn.disabled = true; btn.textContent = 'Gerando…'; }
+    try {
+      const vars    = getExtraVars();
+      const ids     = filteredAthletes().map(a => a.id);
+      const results = await api('/api/whatsapp/compose', {
+        method: 'POST',
+        body:   { template_key: selectedKey, athlete_ids: ids, ...vars },
+      });
+      composeResults = results;
+      // Enrich with cat for display
+      const athMap = Object.fromEntries(athletes.map(a => [a.id, a]));
+      composeResults.forEach(r => { r.cat = athMap[r.athlete_id]?.current_category || ''; });
+      content.querySelector('#wa-results-wrap').innerHTML = buildResultsHtml();
+      wireResultEvents();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      const btn2 = content.querySelector('#btn-wa-compor');
+      if (btn2) { btn2.disabled = false; refreshComposeBtn(); }
+    }
+  }
+
+  function wireResultEvents() {
+    content.querySelector('#wa-chk-all')?.addEventListener('change', e => {
+      content.querySelectorAll('.wa-chk').forEach(cb => cb.checked = e.target.checked);
+    });
+    content.querySelector('#btn-wa-reg')?.addEventListener('click', doRegistrar);
+  }
+
+  async function doRegistrar() {
+    const selected = [...content.querySelectorAll('.wa-chk:checked')].map(cb => cb.value);
+    if (!selected.length) { showToast('Selecione ao menos um atleta', 'error'); return; }
+    const tpl = getTpl();
+    try {
+      await api('/api/whatsapp/log', {
+        method: 'POST',
+        body: {
+          template_key:   selectedKey,
+          template_label: tpl?.label || '',
+          athlete_count:  selected.length,
+          vars:           getExtraVars(),
+        },
+      });
+      showToast(`Envio registrado para ${selected.length} atleta(s)!`, 'success');
+      composeResults = null;
+      render();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  async function renderHistorico() {
+    content.innerHTML = `<p class="placeholder-text">Carregando histórico…</p>`;
+    try {
+      const data    = await api('/api/whatsapp/log');
+      const entries = data.data || [];
+      content.innerHTML = `
+        <div class="section-header">
+          <h1 class="section-title">Histórico de Envios WhatsApp</h1>
+          <button class="btn btn-ghost btn-sm" id="btn-hist-back">← Voltar</button>
+        </div>
+        ${!entries.length ? '<p class="placeholder-text">Nenhum envio registrado.</p>' : `
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Template</th><th>Admin</th><th>Qtd</th><th>Parâmetros</th></tr></thead>
+          <tbody>
+            ${entries.map(e => `<tr>
+              <td style="font-size:12px;white-space:nowrap;">${fmtDate(e.timestamp)}</td>
+              <td style="font-size:13px;">${escapeHtml(e.template_label || e.template_key)}</td>
+              <td style="font-size:12px;color:var(--color-text-muted);">${escapeHtml(e.admin_username || '—')}</td>
+              <td>${e.athlete_count}</td>
+              <td style="font-size:11px;color:var(--color-text-muted);">
+                ${Object.entries(e.vars||{}).map(([k,v])=>`${escapeHtml(k)}: ${escapeHtml(v)}`).join(' · ')||'—'}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}`;
+      content.querySelector('#btn-hist-back')?.addEventListener('click', () => { composeResults = null; render(); });
+    } catch (e) {
+      renderErrorState(content, e.message, renderHistorico);
+    }
+  }
+
+  render();
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Pagamentos
+// ---------------------------------------------------------------------------
+
+async function renderAdminPagamentos(content, selectedSeasonId = null) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+
+  let seasons = [], settings = {};
+  try {
+    const [sRes, cfgRes] = await Promise.all([
+      api('/api/seasons'),
+      api('/api/admin/settings'),
+    ]);
+    seasons  = (sRes.data || sRes || []).sort((a, b) =>
+      (b.created_at || '').localeCompare(a.created_at || ''));
+    settings = cfgRes || {};
+  } catch (e) {
+    renderErrorState(content, e.message, () => renderAdminPagamentos(content, selectedSeasonId));
+    return;
+  }
+
+  if (!seasons.length) {
+    content.innerHTML = `<div class="section-header"><h1 class="section-title">Pagamentos</h1></div>
+      <p class="placeholder-text">Nenhuma temporada cadastrada.</p>`;
+    return;
+  }
+
+  const activeSeason = seasons.find(s => s.status === 'active') || seasons[0];
+  const curId = selectedSeasonId || activeSeason?.id || seasons[0]?.id;
+
+  let payments = [];
+  try {
+    payments = await api(`/api/seasons/${curId}/payments`);
+  } catch (e) {
+    renderErrorState(content, e.message, () => renderAdminPagamentos(content, curId));
+    return;
+  }
+
+  const payAmt     = parseFloat(settings.payment_amount || 0);
+  const dueDay     = parseInt(settings.payment_due_day  || 10, 10);
+  const paidList   = payments.filter(p => p.paid);
+  const totalPaid  = paidList.reduce((s, p) => s + (p.amount || 0), 0);
+  const active     = payments.filter(p => p.status === 'ativo');
+  const pending    = active.filter(p => !p.paid);
+
+  let filterShow   = 'all'; // 'all' | 'paid' | 'pending'
+  let filterCat    = '';
+
+  function filtered() {
+    return payments.filter(p => {
+      if (filterCat && p.current_category !== filterCat) return false;
+      if (filterShow === 'paid'    && !p.paid) return false;
+      if (filterShow === 'pending' && p.paid)  return false;
+      return true;
+    });
+  }
+
+  function buildTable() {
+    const rows = filtered();
+    if (!rows.length) return '<p class="placeholder-text" style="font-size:13px;">Nenhum atleta nos filtros selecionados.</p>';
+    return `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Atleta</th><th>Cat</th><th>Status</th><th>Pagamento</th>
+            <th style="text-align:right;">Valor</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(p => `<tr>
+              <td>
+                <div style="font-size:13px;font-weight:500;">${escapeHtml(p.nome)}</div>
+                ${p.apelido && p.apelido !== p.nome ? `<div style="font-size:11px;color:var(--color-text-muted);">${escapeHtml(p.apelido)}</div>` : ''}
+              </td>
+              <td>${catLabel(p.current_category)}</td>
+              <td>${statusBadge(p.status)}</td>
+              <td>
+                ${p.paid
+                  ? `<span style="color:#22C55E;font-size:13px;">✅ ${fmtDate(p.paid_at)}</span>`
+                  : `<span style="color:var(--color-text-muted);font-size:13px;">⏳ Pendente</span>`}
+              </td>
+              <td style="text-align:right;font-size:13px;">
+                ${p.paid && p.amount ? `R$ ${p.amount.toFixed(2).replace('.',',')}` : '—'}
+              </td>
+              <td style="white-space:nowrap;">
+                ${p.paid
+                  ? `<button class="btn btn-sm btn-ghost" data-unpay="${p.athlete_id}" title="Reverter">↩</button>`
+                  : `<button class="btn btn-sm btn-primary" data-pay="${p.athlete_id}" data-nome="${escapeHtml(p.nome)}">✓ Pago</button>`}
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  function render() {
+    const rows = filtered();
+    content.innerHTML = `
+      <div class="section-header">
+        <div>
+          <h1 class="section-title">Pagamentos</h1>
+          <p class="section-subtitle">${paidList.length}/${payments.filter(p=>p.status==='ativo').length} ativos pagos · R$ ${totalPaid.toFixed(2).replace('.',',')}</p>
+        </div>
+        <a href="#admin/config" class="btn btn-ghost btn-sm">⚙️ Config</a>
+      </div>
+
+      <!-- Resumo -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;">
+        <div class="card" style="text-align:center;padding:12px;">
+          <div style="font-size:22px;font-weight:700;color:#22C55E;">${paidList.length}</div>
+          <div style="font-size:11px;color:var(--color-text-muted);">Pagos</div>
+        </div>
+        <div class="card" style="text-align:center;padding:12px;">
+          <div style="font-size:22px;font-weight:700;color:#EF4444;">${pending.length}</div>
+          <div style="font-size:11px;color:var(--color-text-muted);">Pendentes (ativos)</div>
+        </div>
+        <div class="card" style="text-align:center;padding:12px;">
+          <div style="font-size:18px;font-weight:700;">R$ ${totalPaid.toFixed(2).replace('.',',')}</div>
+          <div style="font-size:11px;color:var(--color-text-muted);">Arrecadado</div>
+        </div>
+        ${payAmt > 0 ? `<div class="card" style="text-align:center;padding:12px;">
+          <div style="font-size:18px;font-weight:700;">R$ ${(payAmt * paidList.length).toFixed(2).replace('.',',')}</div>
+          <div style="font-size:11px;color:var(--color-text-muted);">Esperado (R$${payAmt.toFixed(0)}/atleta)</div>
+        </div>` : ''}
+      </div>
+
+      <!-- Controles -->
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;">
+        <select id="pag-season-sel" class="field-input" style="width:auto;height:34px;font-size:13px;">
+          ${seasons.map(s => `<option value="${s.id}"${s.id===curId?' selected':''}>${escapeHtml(s.name || s.id)} ${s.status==='active'?'(ativa)':''}</option>`).join('')}
+        </select>
+        <select id="pag-filter-show" class="field-input" style="width:auto;height:34px;font-size:13px;">
+          <option value="all"${filterShow==='all'?' selected':''}>Todos (${rows.length})</option>
+          <option value="paid"${filterShow==='paid'?' selected':''}>Pagos</option>
+          <option value="pending"${filterShow==='pending'?' selected':''}>Pendentes</option>
+        </select>
+        <select id="pag-filter-cat" class="field-input" style="width:auto;height:34px;font-size:13px;">
+          <option value="">Todas cats</option>
+          ${['A','B','C','D'].map(c=>`<option value="${c}"${filterCat===c?' selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+
+      <div id="pag-table-wrap">${buildTable()}</div>`;
+
+    wireEvents();
+  }
+
+  function wireEvents() {
+    content.querySelector('#pag-season-sel')?.addEventListener('change', e => {
+      renderAdminPagamentos(content, e.target.value);
+    });
+    content.querySelector('#pag-filter-show')?.addEventListener('change', e => {
+      filterShow = e.target.value;
+      content.querySelector('#pag-table-wrap').innerHTML = buildTable();
+      wireTableEvents();
+    });
+    content.querySelector('#pag-filter-cat')?.addEventListener('change', e => {
+      filterCat = e.target.value;
+      content.querySelector('#pag-table-wrap').innerHTML = buildTable();
+      wireTableEvents();
+    });
+    wireTableEvents();
+  }
+
+  function wireTableEvents() {
+    content.querySelectorAll('[data-pay]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const amtDefault = payAmt > 0 ? payAmt.toFixed(2) : '';
+        openModal(
+          `Registrar pagamento — ${btn.dataset.nome}`,
+          `<div class="form-group">
+            <label class="field-label">Valor (R$)</label>
+            <input id="pay-amount" class="field-input" type="number" step="0.01" min="0"
+                   value="${amtDefault}" placeholder="${payAmt > 0 ? payAmt.toFixed(2) : '0.00'}" />
+          </div>
+          <div class="form-group">
+            <label class="field-label">Observação (opcional)</label>
+            <input id="pay-note" class="field-input" placeholder="Ex.: pago em espécie" />
+          </div>`,
+          `<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+           <button class="btn btn-primary" id="btn-confirm-pay" style="margin-left:8px;">Confirmar</button>`
+        );
+        document.getElementById('btn-confirm-pay').addEventListener('click', async () => {
+          const amount = parseFloat(document.getElementById('pay-amount').value || '0') || 0;
+          const note   = document.getElementById('pay-note').value.trim();
+          try {
+            await api(`/api/seasons/${curId}/payments/${btn.dataset.pay}`, {
+              method: 'POST', body: { amount, note },
+            });
+            closeModal();
+            showToast('Pagamento registrado!', 'success');
+            await renderAdminPagamentos(content, curId);
+          } catch (e) { showToast(e.message, 'error'); }
+        });
+      });
+    });
+
+    content.querySelectorAll('[data-unpay]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        confirmModal('Reverter Pagamento', 'Marcar este atleta como não pago?', async () => {
+          try {
+            await api(`/api/seasons/${curId}/payments/${btn.dataset.unpay}`, { method: 'DELETE' });
+            showToast('Pagamento revertido.', 'success');
+            await renderAdminPagamentos(content, curId);
+          } catch (e) { showToast(e.message, 'error'); }
+        }, 'Reverter');
+      });
+    });
+  }
+
+  render();
+}
+
+// ---------------------------------------------------------------------------
+// Mesa: Pagamento
+// ---------------------------------------------------------------------------
+
+async function renderMesaPagamento(content) {
+  content.innerHTML = `<p class="placeholder-text">Carregando…</p>`;
+  let status = null;
+  try {
+    status = await api('/api/mesa/payment-status');
+  } catch (e) {
+    renderErrorState(content, e.message, () => renderMesaPagamento(content));
+    return;
+  }
+
+  if (!status.season_id) {
+    content.innerHTML = `
+      <div style="padding:var(--space-md);">
+        <h2 class="section-title" style="font-size:18px;">Pagamento</h2>
+        <div class="empty-state" style="padding:40px 0;">
+          <div class="empty-state-icon">💳</div>
+          <p class="empty-state-title">Sem temporada ativa</p>
+          <p style="font-size:13px;color:var(--color-text-muted);">Aguarde o administrador iniciar uma temporada.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const { paid, paid_at, amount, payment_amount, payment_due_day, season_name } = status;
+  const fmtAmt = (v) => v > 0 ? `R$ ${parseFloat(v).toFixed(2).replace('.',',')}` : '—';
+
+  content.innerHTML = `
+    <div style="padding:var(--space-md);">
+      <h2 class="section-title" style="font-size:18px;margin-bottom:16px;">Pagamento</h2>
+
+      <div class="card" style="text-align:center;padding:28px 20px;margin-bottom:16px;">
+        <div style="font-size:52px;margin-bottom:12px;">${paid ? '✅' : '⏳'}</div>
+        <div style="font-size:20px;font-weight:700;color:${paid ? '#22C55E' : 'var(--color-text)'};">
+          ${paid ? 'Em Dia' : 'Pendente'}
+        </div>
+        <div style="font-size:13px;color:var(--color-text-muted);margin-top:6px;">
+          ${escapeHtml(season_name)}
+        </div>
+        ${paid
+          ? `<div style="font-size:13px;margin-top:12px;">Pago em <strong>${fmtDate(paid_at)}</strong> · ${fmtAmt(amount)}</div>`
+          : payment_amount > 0
+            ? `<div style="font-size:13px;color:#EF4444;margin-top:12px;">Valor: <strong>${fmtAmt(payment_amount)}</strong> · Vence dia <strong>${payment_due_day}</strong></div>`
+            : ''}
+      </div>
+
+      ${!paid ? `
+        <div class="alert alert-info" style="font-size:13px;line-height:1.6;">
+          Entre em contato com a administração do clube para regularizar seu pagamento.
+        </div>` : ''}
+    </div>`
 }

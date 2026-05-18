@@ -107,8 +107,12 @@
         <!-- Login Admin -->
         <form id="form-login-admin" class="tab-content" data-tab="admin">
           <div class="form-group">
-            <label class="field-label">Senha de Administrador</label>
-            <input type="password" name="password" class="field-input" placeholder="Senha admin" autocomplete="current-password" required />
+            <label class="field-label">Usuário <span style="font-size:11px;opacity:.6;">(deixe em branco para acesso legado)</span></label>
+            <input type="text" name="username" class="field-input" placeholder="admin" autocomplete="username" />
+          </div>
+          <div class="form-group">
+            <label class="field-label">Senha</label>
+            <input type="password" name="password" class="field-input" placeholder="••••••" autocomplete="current-password" required />
           </div>
           <p id="login-admin-error" class="field-error hidden"></p>
           <button type="submit" class="btn btn-primary btn-full btn-lg">Entrar como Admin</button>
@@ -188,24 +192,30 @@
         </div>
         <nav class="sidebar-nav">
           <a href="#admin/dashboard"    class="sidebar-link">📊 Dashboard</a>
-          <a href="#admin/atletas"      class="sidebar-link">🏃 Atletas</a>
-          <a href="#admin/categorias"   class="sidebar-link">🗂 Categorias</a>
-          <a href="#admin/temporadas"     class="sidebar-link">📅 Temporadas</a>
-          <a href="#admin/temporada/nova" class="sidebar-link">➕ Nova Temporada</a>
-          <a href="#admin/rodada"       class="sidebar-link">🎯 Painel de Rodada</a>
-          <a href="#admin/mediacao"     class="sidebar-link">🕐 Mediação de Slot</a>
-          <a href="#admin/resultados"   class="sidebar-link">📋 Resultados</a>
-          <a href="#admin/fechamento"   class="sidebar-link">🔒 Fechamento</a>
-          <a href="#admin/lesoes"       class="sidebar-link">🏥 Lesões / Convidados</a>
-          <a href="#admin/liga"         class="sidebar-link">🔗 Ligas</a>
-          <a href="#admin/anual"        class="sidebar-link">🏆 Premiações</a>
-          <a href="#admin/relatorio"    class="sidebar-link">📈 Relatório</a>
+          <a href="#admin/pendencias"   class="sidebar-link">⚡ Pendências</a>
           <a href="#admin/contestacoes" class="sidebar-link" style="display:flex;align-items:center;">
             ⚠️ Contestações <span class="sidebar-notif-badge" id="contested-badge"></span>
           </a>
-          <a href="#admin/pendencias"   class="sidebar-link">⚡ Pendências</a>
+          <hr class="sidebar-divider">
+          <a href="#admin/atletas"      class="sidebar-link">🏃 Atletas</a>
+          <a href="#admin/categorias"   class="sidebar-link">🗂 Categorias</a>
+          <a href="#admin/lesoes"       class="sidebar-link">🏥 Lesões / Convidados</a>
+          <hr class="sidebar-divider">
+          <a href="#admin/liga"         class="sidebar-link">🔗 Ligas</a>
+          <a href="#admin/temporadas"   class="sidebar-link">📅 Temporadas</a>
+          <a href="#admin/rodada"       class="sidebar-link">🎯 Painel de Rodada</a>
+          <a href="#admin/mediacao"     class="sidebar-link">🕐 Mediação de Slot</a>
+          <hr class="sidebar-divider">
+          <a href="#admin/resultados"   class="sidebar-link">📋 Resultados</a>
+          <a href="#admin/fechamento"   class="sidebar-link">🔒 Fechamento</a>
+          <a href="#admin/anual"        class="sidebar-link">🏆 Premiações</a>
+          <a href="#admin/relatorio"    class="sidebar-link">📈 Relatório</a>
+          <hr class="sidebar-divider">
           <a href="#admin/auditoria"    class="sidebar-link">🔍 Auditoria</a>
           <a href="#admin/config"       class="sidebar-link">⚙️ Configurações</a>
+          <a href="#admin/pagamentos"   class="sidebar-link">💳 Pagamentos</a>
+          <a href="#admin/whatsapp"     class="sidebar-link">📱 WhatsApp</a>
+          <a href="#admin/admins"       class="sidebar-link" style="display:none">👥 Admins</a>
         </nav>
         <button id="btn-logout" class="btn btn-ghost btn-full sidebar-logout">Sair</button>
       </aside>
@@ -224,6 +234,7 @@
           </button>
           <span class="logo-super" style="font-size:15px;">Super</span><span class="logo-rank" style="font-size:15px;">Rank</span>
           <span class="sidebar-badge" style="margin-left:4px;">Admin</span>
+          <span id="admin-user-label" style="margin-left:auto;font-size:12px;color:var(--color-text-muted);padding-right:4px;" title=""></span>
         </div>
 
         <main class="admin-main" id="admin-content" role="main">
@@ -331,6 +342,13 @@
         <a href="#mesa/slots" class="bottom-nav-item">
           <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
           <span class="bottom-nav-label">Slots</span>
+        </a>
+        <a href="#mesa/resultado" class="bottom-nav-item" id="nav-resultado">
+          <span style="position:relative;display:inline-flex;">
+            <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <span id="resultado-nav-badge" style="display:none;position:absolute;top:-4px;right:-6px;width:8px;height:8px;border-radius:50%;background:var(--color-accent);"></span>
+          </span>
+          <span class="bottom-nav-label">Resultado</span>
         </a>
         <a href="#mesa/perfil" class="bottom-nav-item">
           <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>

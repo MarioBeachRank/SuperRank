@@ -335,6 +335,7 @@ select.field-input {
 }
 
 .sidebar-nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.sidebar-divider { border: none; border-top: 1px solid var(--color-surface-2); margin: 6px 0; }
 
 .sidebar-link {
   display: block;
@@ -1298,6 +1299,26 @@ select.field-input {
 .slot-status-dot         { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .slot-status-dot.done    { background: var(--color-cat-b); }
 .slot-status-dot.pending { background: var(--color-gold); }
+
+.slot-peer-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-cat-b);
+  color: #000;
+  font-size: 9px;
+  font-weight: 700;
+  margin-left: 3px;
+  vertical-align: middle;
+  line-height: 1;
+  pointer-events: none;
+}
+.slot-peer-badge.slot-peer-full {
+  background: var(--color-gold);
+}
 
 /* =====================================================================
    Admin: Mediação de Slot
@@ -3036,3 +3057,7 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 .hist-season-tab.active {
   background: var(--color-primary); border-color: var(--color-primary); color: #fff;
 }
+
+/* Sprint 24: Round progress bar (Mesa Home) */
+.round-progress-track { height: 6px; background: var(--color-surface-2); border-radius: 3px; overflow: hidden; }
+.round-progress-fill  { height: 100%; background: var(--color-primary); border-radius: 3px; transition: width .4s ease; }
