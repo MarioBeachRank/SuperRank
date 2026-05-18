@@ -133,8 +133,8 @@ def _hash_password(pw: str) -> str:
 
 
 def _ensure_super_admin() -> None:
-    """Garante que exista um super-admin em admins.json sincronizado com ADMIN_PASSWORD."""
-    env_pw = os.getenv("ADMIN_PASSWORD", "")
+    """Garante que exista um super-admin em admins.json sincronizado com SENHA_DE_ADMINISTRADOR."""
+    env_pw = os.getenv("SENHA_DE_ADMINISTRADOR", "")
     if not env_pw:
         return
     env_hash = _hash_password(env_pw)
@@ -195,7 +195,7 @@ def auth_admin():
 
     # Se não passou username, tenta autenticar como o admin legado do .env
     if not username:
-        if password == os.getenv("ADMIN_PASSWORD", ""):
+        if password == os.getenv("SENHA_DE_ADMINISTRADOR", ""):
             env_admin = next(
                 (a for a in admins_db["data"] if a.get("role") == "super"),
                 None,
