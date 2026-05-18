@@ -133,23 +133,28 @@ def _hash_password(pw: str) -> str:
 
 
 def _ensure_super_admin() -> None:
-    """Cria o super-admin do .env em admins.json se o arquivo estiver vazio."""
-    admins_db = read_json("admins.json")
-    if admins_db["data"]:
-        return
+    """Garante que exista um super-admin em admins.json sincronizado com ADMIN_PASSWORD."""
     env_pw = os.getenv("ADMIN_PASSWORD", "")
     if not env_pw:
         return
-    admins_db["data"].append({
-        "id": str(uuid.uuid4()),
-        "nome": "Super Admin",
-        "username": "admin",
-        "password_hash": _hash_password(env_pw),
-        "role": "super",
-        "created_at": now_iso(),
-        "last_login": None,
-    })
-    write_json("admins.json", admins_db)
+    env_hash = _hash_password(env_pw)
+    admins_db = read_json("admins.json")
+    super_admin = next((a for a in admins_db["data"] if a.get("role") == "super"), None)
+    if super_admin is None:
+        admins_db["data"].append({
+            "id": str(uuid.uuid4()),
+            "nome": "Super Admin",
+            "username": "admin",
+            "password_hash": env_hash,
+            "role": "super",
+            "created_at": now_iso(),
+            "last_login": None,
+        })
+        write_json("admins.json", admins_db)
+    elif super_admin.get("password_hash") != env_hash:
+        # Sincroniza hash com o env var atual (ex.: senha trocada no Railway)
+        super_admin["password_hash"] = env_hash
+        write_json("admins.json", admins_db)
 
 
 def require_atleta(f):
