@@ -2780,6 +2780,22 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
   color: var(--color-accent);
   white-space: nowrap;
 }
+/* Ranking ao vivo — tabela completa por categoria no dashboard */
+.dash-ranking-full {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.dash-ranking-cat-block { min-width: 0; }
+.dash-ranking-cat-block .dash-ranking-card-title { margin-bottom: 8px; }
+.dash-ranking-cat-block .ranking-table { margin: 0; table-layout: fixed; }
+/* Compacta as colunas para caber sem cortar a coluna R no card */
+.dash-ranking-cat-block .ranking-table th,
+.dash-ranking-cat-block .ranking-table td { padding-left: 10px; padding-right: 10px; }
+.dash-ranking-cat-block .ranking-table th:nth-child(2),
+.dash-ranking-cat-block .ranking-table td:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash-ranking-cat-block .ranking-table th.num { width: 40px; }
 
 /* =====================================================================
    Sprint 13 — Fluxo de Resultados Aprimorado

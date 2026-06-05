@@ -1350,32 +1350,82 @@ async function renderAdminDashboard(content) {
       </div>`).join('');
   }
 
-  // --- Mini-ranking das 4 categorias ---
-  function buildRankingGrid(rankingData) {
+  // --- Ranking ao vivo: tabela completa por categoria (atualiza a cada rodada) ---
+  function buildRankingFull(rankingData) {
     const cats = ['A','B','C','D'].filter(c => rankingData[c]?.length > 0);
     if (!cats.length) return '';
-    const medals = ['', 'gold', 'silver', 'bronze'];
+    const medals = ['gold','silver','bronze'];
+
+    const renderCatTable = (cat) => {
+      const rows = rankingData[cat] || [];
+      const n = rows.length;
+      const m = n >= 8 ? 2 : 1;
+      const hasPromo = cat !== 'A' && n >= 4;
+      const hasReleg = cat !== 'D' && n >= 4;
+
+      const withSep = [];
+      rows.forEach((r, i) => {
+        const inPromo = hasPromo && r.rank <= m;
+        const inReleg = hasReleg && r.rank > n - m;
+        const trClass = [inPromo ? 'pub-zone-promo' : '', inReleg ? 'pub-zone-releg' : ''].filter(Boolean).join(' ');
+
+        const delta = r.rank_delta;
+        let deltaTag = '';
+        if (delta > 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-up" title="Subiu ${delta} posição${delta !== 1 ? 'ões' : ''}">▲${delta}</span>`;
+        else if (delta < 0)
+          deltaTag = `<span class="rank-tbl-delta rank-tbl-down" title="Caiu ${Math.abs(delta)} posição${Math.abs(delta) !== 1 ? 'ões' : ''}">▼${Math.abs(delta)}</span>`;
+
+        const gw = r.games_won ?? '—';
+        const gl = r.games_lost ?? '—';
+        const rd = r.results_count ?? 0;
+        const zeroFlag = rd === 0
+          ? `<span title="0 rodadas jogadas — inelegível para movimento" style="margin-left:6px;color:#BA7517;font-size:11px;">⚠0R</span>`
+          : '';
+
+        withSep.push(`<tr class="${trClass}">
+          <td><span class="rank-position ${medals[r.rank-1]||''}">${r.rank}</span></td>
+          <td><a href="#admin/atletas" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a>${deltaTag}${zeroFlag}</td>
+          <td class="num ranking-pts">${r.points}</td>
+          <td class="num ranking-stat">${r.wins}</td>
+          <td class="num ranking-stat">${gw}/${gl}</td>
+          <td class="num ranking-stat" style="font-size:11px;color:var(--color-text-muted);">${rd}R</td>
+        </tr>`);
+        if (hasPromo && r.rank === m)
+          withSep.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-promo">▲ Zona de Promoção acima</td></tr>`);
+        if (hasReleg && r.rank === n - m)
+          withSep.push(`<tr class="zone-separator"><td colspan="6" class="zone-sep-releg">▼ Zona de Rebaixamento abaixo</td></tr>`);
+      });
+
+      return `
+        <div class="dash-ranking-cat-block">
+          <div class="dash-ranking-card-title">${catLabel(cat)} <span style="font-weight:400;color:var(--color-text-muted);">· ${n} atleta${n !== 1 ? 's' : ''}</span></div>
+          <div class="card" style="padding:0;overflow:hidden;">
+            <table class="ranking-table">
+              <thead>
+                <tr>
+                  <th style="width:44px;">#</th>
+                  <th>Atleta</th>
+                  <th class="num">Pts</th>
+                  <th class="num">V</th>
+                  <th class="num">Games</th>
+                  <th class="num">R</th>
+                </tr>
+              </thead>
+              <tbody>${withSep.join('')}</tbody>
+            </table>
+          </div>
+        </div>`;
+    };
+
     return `
       <div class="dash-ranking-section">
         <div class="dash-ranking-header">
-          <span class="dash-ranking-title">Ranking ao Vivo</span>
-          <a href="#publico/ranking" class="btn btn-ghost btn-sm">Ver completo →</a>
+          <span class="dash-ranking-title">Ranking ao Vivo <span style="font-weight:400;font-size:12px;color:var(--color-text-muted);">· temporada · atualiza a cada rodada</span></span>
+          <a href="#admin/anual" class="btn btn-ghost btn-sm">Ver ranking do ano →</a>
         </div>
-        <div class="dash-ranking-grid">
-          ${cats.map(cat => `
-            <div class="dash-ranking-card">
-              <div class="dash-ranking-card-title">${catLabel(cat)}</div>
-              ${rankingData[cat].slice(0, 3).map((r, i) => `
-                <div class="dash-ranking-row">
-                  <span class="rank-position ${medals[i + 1]}" style="font-size:13px;width:22px;height:22px;">${r.rank}</span>
-                  <span class="dash-ranking-nome">${escapeHtml(r.nome)}</span>
-                  <span class="dash-ranking-pts">${r.points}pts</span>
-                </div>`).join('')}
-              ${rankingData[cat].length > 3 ? `
-                <div style="font-size:11px;color:var(--color-text-muted);text-align:center;padding-top:6px;">
-                  +${rankingData[cat].length - 3} atletas
-                </div>` : ''}
-            </div>`).join('')}
+        <div class="dash-ranking-full">
+          ${cats.map(renderCatTable).join('')}
         </div>
       </div>`;
   }
@@ -1439,7 +1489,7 @@ async function renderAdminDashboard(content) {
 
     ${contestedCard}
     ${buildRoundProgress(stats.round_progress)}
-    ${buildRankingGrid(rankingData)}`;
+    ${buildRankingFull(rankingData)}`;
 
   content.querySelector('#btn-dash-refresh')?.addEventListener('click', () => renderAdminDashboard(content));
 }
