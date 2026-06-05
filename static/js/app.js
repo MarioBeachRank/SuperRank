@@ -3088,6 +3088,33 @@ async function renderAdminRodada(content) {
       });
     });
 
+    // Descartar rodada (destrutivo — apaga resultados)
+    content.querySelectorAll('.btn-discard-round').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const roundId = btn.dataset.roundId;
+        confirmModal(
+          'Descartar rodada',
+          'Esta ação APAGA todos os resultados lançados nesta rodada e a marca como cancelada. ' +
+          'Use apenas para rodadas de teste ou criadas por engano. O ranking será recalculado sem esses resultados. ' +
+          'Esta ação é IRREVERSÍVEL.',
+          async () => {
+            // Segunda confirmação explícita.
+            if (!confirm('Tem certeza? Os resultados desta rodada serão apagados definitivamente.')) return;
+            btn.disabled = true; btn.textContent = 'Descartando…';
+            try {
+              const res = await api(`/api/rounds/${roundId}/discard`, { method: 'POST', body: { confirm: true } });
+              showToast(`Rodada descartada. ${res.results_removed} resultado(s) apagado(s).`, 'success');
+              await loadAndPaint(season);
+            } catch (err) {
+              showToast(`Erro: ${err.message}`, 'error');
+              btn.disabled = false; btn.innerHTML = '⚠ Descartar rodada (apaga resultados)';
+            }
+          },
+          'Descartar'
+        );
+      });
+    });
+
     // Acordeon dos rounds
     content.querySelectorAll('.round-card-header').forEach(header => {
       header.addEventListener('click', async () => {
@@ -3281,6 +3308,14 @@ function renderRoundCard(round, season) {
               style="color:#BA7517;"
               title="Reabrir esta rodada para permitir correções">
               🔓 Reabrir Rodada
+            </button>
+          </div>` : ''}
+        ${round.status !== 'cancelled' ? `
+          <div style="margin-top:12px;padding-top:12px;border-top:var(--border);">
+            <button class="btn btn-ghost btn-sm btn-discard-round" data-round-id="${round.id}"
+              style="color:#D94040;opacity:.85;"
+              title="Descartar a rodada por completo: APAGA os resultados lançados e cancela a rodada. Use para rodadas de teste/engano. Irreversível.">
+              ⚠ Descartar rodada (apaga resultados)
             </button>
           </div>` : ''}
       </div>

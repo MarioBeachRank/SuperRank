@@ -88,6 +88,42 @@ def test_cancel_exige_admin(env):
     assert resp.status_code in (401, 403)
 
 
+def test_discard_apaga_resultados_e_cancela(env):
+    c, tmp = env
+    _login(c)
+    _seed_round(tmp, status="closed")
+    _seed_result(tmp, status="confirmed")
+    resp = c.post("/api/rounds/R1/discard", json={"confirm": True})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["results_removed"] == 1
+    # rodada vira cancelada
+    rounds = json.loads((tmp / "rounds.json").read_text())["data"]
+    assert rounds[0]["status"] == "cancelled"
+    assert rounds[0]["discarded_results_count"] == 1
+    # resultado foi apagado
+    results = json.loads((tmp / "results.json").read_text())["data"]
+    assert all(r.get("round_id") != "R1" for r in results)
+
+
+def test_discard_exige_confirmacao(env):
+    c, tmp = env
+    _login(c)
+    _seed_round(tmp, status="closed")
+    _seed_result(tmp, status="confirmed")
+    resp = c.post("/api/rounds/R1/discard", json={})
+    assert resp.status_code == 400
+    # nada foi apagado
+    results = json.loads((tmp / "results.json").read_text())["data"]
+    assert len(results) == 1
+
+
+def test_discard_exige_admin(env):
+    c, tmp = env
+    _seed_round(tmp, status="closed")
+    resp = c.post("/api/rounds/R1/discard", json={"confirm": True})
+    assert resp.status_code in (401, 403)
+
+
 def test_rodada_cancelada_nao_bloqueia_fechamento(env):
     c, tmp = env
     _login(c)

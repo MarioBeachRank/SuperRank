@@ -3300,6 +3300,60 @@ def round_cancel(round_id):
     return jsonify(_enrich_round(rnd, athletes_by_id))
 
 
+@app.route("/api/rounds/<round_id>/discard", methods=["POST"])
+@require_admin
+def round_discard(round_id):
+    """Descarta uma rodada por completo: APAGA os resultados lançados e marca
+    a rodada como cancelada.
+
+    Diferente de /cancel (que se recusa a destruir pontuação), este endpoint é
+    para rodadas de teste/engano. Ação destrutiva: exige confirmação explícita
+    (body {"confirm": true}). O ranking recalcula sem os resultados removidos.
+    """
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") is not True:
+        return jsonify({"error": "Confirmação obrigatória. Envie {\"confirm\": true}."}), 400
+
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd.get("status") == "cancelled":
+        return jsonify({"error": "Rodada já cancelada"}), 400
+
+    # Remove os resultados desta rodada (qualquer status).
+    results_db = read_json("results.json")
+    removed = [r for r in results_db["data"] if r.get("round_id") == round_id]
+    results_db["data"] = [r for r in results_db["data"] if r.get("round_id") != round_id]
+    write_json("results.json", results_db)
+
+    # Remove snapshots de ranking gerados por esta rodada.
+    snapshots_db = read_json("ranking_snapshots.json")
+    snap_before = len(snapshots_db["data"])
+    snapshots_db["data"] = [s for s in snapshots_db["data"] if s.get("round_id") != round_id]
+    snap_removed = snap_before - len(snapshots_db["data"])
+    if snap_removed:
+        write_json("ranking_snapshots.json", snapshots_db)
+
+    rnd["status"] = "cancelled"
+    rnd["cancelled_at"] = now_iso()
+    rnd["discarded_at"] = now_iso()
+    rnd["discarded_results_count"] = len(removed)
+    write_json("rounds.json", rounds_db)
+    log_audit("round_discarded", {
+        "round_id": round_id,
+        "round_number": rnd.get("round_number"),
+        "season_id": rnd.get("season_id"),
+        "results_removed": len(removed),
+        "snapshots_removed": snap_removed,
+    })
+    athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
+    return jsonify({
+        "round": _enrich_round(rnd, athletes_by_id),
+        "results_removed": len(removed),
+    })
+
+
 @app.route("/api/seasons/<season_id>/ranking/export.csv")
 @require_admin
 def ranking_export_csv(season_id):
