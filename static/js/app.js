@@ -2373,9 +2373,7 @@ async function renderAdminTemporadas(content) {
                   ${s.status === 'active'
                     ? `<button class="btn btn-ghost btn-sm btn-desativar-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#BA7517;">Desativar</button>`
                     : ''}
-                  ${s.status === 'pending'
-                    ? `<button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" style="color:#D94040;">Excluir</button>`
-                    : ''}
+                  <button class="btn btn-ghost btn-sm btn-excluir-temporada" data-id="${s.id}" data-nome="${escapeHtml(s.name)}" data-status="${s.status}" style="color:#D94040;">Excluir</button>
                 </td>
               </tr>`;}).join('')}
           </tbody>
@@ -2440,11 +2438,17 @@ async function renderAdminTemporadas(content) {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         const nome = btn.dataset.nome;
+        const status = btn.dataset.status;
+        const hasData = status !== 'pending';
         if (!confirm(`Excluir temporada "${nome}"? Esta ação não pode ser desfeita.`)) return;
+        // Temporada com dados: segunda confirmação, pois apaga rodadas/resultados em cascata.
+        if (hasData && !confirm(`"${nome}" tem dados lançados (rodadas, resultados). TODOS serão apagados em cascata. Confirmar exclusão definitiva?`)) return;
         btn.disabled = true;
         btn.textContent = 'Excluindo…';
         try {
-          await api(`/api/seasons/${id}`, { method: 'DELETE' });
+          const res = await api(`/api/seasons/${id}`, { method: 'DELETE', body: hasData ? { confirm: true } : {} });
+          const d = res?.deleted;
+          showToast(d ? `Temporada excluída (${d.rounds} rodada(s), ${d.results} resultado(s)).` : 'Temporada excluída.', 'success');
           seasons = seasons.filter(s => s.id !== id);
           paint();
         } catch (err) {
@@ -6540,12 +6544,19 @@ async function renderAdminLiga(content) {
   };
 
   window.deleteLiga = (id, name) => {
-    confirmModal('Excluir Liga', `Excluir "${name}"? Ação irreversível.`, async () => {
+    const liga = ligas.find(l => l.id === id);
+    const nSeasons = (liga?.seasons || []).length;
+    const msg = nSeasons
+      ? `Excluir "${name}"? Esta liga tem ${nSeasons} temporada(s) vinculada(s) — ELAS E TODOS OS DADOS (rodadas, resultados) serão apagados em cascata. Ação irreversível.`
+      : `Excluir "${name}"? Ação irreversível.`;
+    confirmModal('Excluir Liga', msg, async () => {
+      // Com temporadas: segunda confirmação explícita antes do hard delete em cascata.
+      if (nSeasons && !confirm(`Confirmar exclusão definitiva da liga "${name}" e suas ${nSeasons} temporada(s)?`)) return;
       try {
-        await api(`/api/ligas/${id}`, { method: 'DELETE' });
+        const res = await api(`/api/ligas/${id}`, { method: 'DELETE', body: nSeasons ? { confirm: true } : {} });
         ligas = ligas.filter(l => l.id !== id);
         render();
-        showToast('Liga excluída.');
+        showToast(res?.seasons_deleted ? `Liga excluída (${res.seasons_deleted} temporada(s) apagada(s)).` : 'Liga excluída.');
       } catch (err) { showToast(`Erro: ${err.message}`, 'error'); }
     }, 'Excluir');
   };

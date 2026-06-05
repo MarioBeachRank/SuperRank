@@ -779,6 +779,67 @@ def seasons_update(season_id):
     return jsonify(season)
 
 
+def _cascade_delete_season(season_id: str) -> dict:
+    """Apaga uma temporada e TODOS os registros dependentes. Retorna contagens.
+
+    Não apaga atletas — apenas remove as entradas de category_history daquela
+    temporada. Desvincula a temporada de qualquer liga.
+    """
+    counts: dict[str, int] = {}
+
+    rounds_db = read_json("rounds.json")
+    round_ids = {r["id"] for r in rounds_db["data"] if r.get("season_id") == season_id}
+    counts["rounds"] = len(round_ids)
+    rounds_db["data"] = [r for r in rounds_db["data"] if r.get("season_id") != season_id]
+    write_json("rounds.json", rounds_db)
+
+    def _purge(filename, pred):
+        db = read_json(filename)
+        before = len(db["data"])
+        db["data"] = [x for x in db["data"] if not pred(x)]
+        removed = before - len(db["data"])
+        if removed:
+            write_json(filename, db)
+        return removed
+
+    counts["results"]           = _purge("results.json",           lambda x: x.get("season_id") == season_id or x.get("round_id") in round_ids)
+    counts["ranking_snapshots"] = _purge("ranking_snapshots.json", lambda x: x.get("season_id") == season_id or x.get("round_id") in round_ids)
+    counts["slots"]             = _purge("slots.json",             lambda x: x.get("round_id") in round_ids)
+    counts["guest_requests"]    = _purge("guest_requests.json",    lambda x: x.get("season_id") == season_id or x.get("round_id") in round_ids)
+    counts["injuries"]          = _purge("injuries.json",          lambda x: x.get("season_id") == season_id)
+    counts["payments"]          = _purge("payments.json",          lambda x: x.get("season_id") == season_id)
+
+    # Atletas: nunca apagados — só limpa o histórico de movimentação desta temporada.
+    ath = read_json("athletes.json")
+    ch_removed = 0
+    for a in ath["data"]:
+        hist = a.get("category_history")
+        if isinstance(hist, list):
+            new = [h for h in hist if h.get("season_id") != season_id]
+            ch_removed += len(hist) - len(new)
+            a["category_history"] = new
+    counts["category_history_entries"] = ch_removed
+    if ch_removed:
+        write_json("athletes.json", ath)
+
+    # Desvincula de qualquer liga.
+    ligas = read_json("ligas.json")
+    changed = False
+    for l in ligas["data"]:
+        if isinstance(l.get("seasons"), list) and season_id in l["seasons"]:
+            l["seasons"] = [s for s in l["seasons"] if s != season_id]
+            changed = True
+    if changed:
+        write_json("ligas.json", ligas)
+
+    # Por fim, remove a própria temporada.
+    seasons_db = read_json("seasons.json")
+    seasons_db["data"] = [s for s in seasons_db["data"] if s["id"] != season_id]
+    write_json("seasons.json", seasons_db)
+
+    return counts
+
+
 @app.route("/api/seasons/<season_id>", methods=["DELETE"])
 @require_admin
 def seasons_delete(season_id):
@@ -786,11 +847,23 @@ def seasons_delete(season_id):
     season = next((s for s in db["data"] if s["id"] == season_id), None)
     if not season:
         return jsonify({"error": "Temporada não encontrada"}), 404
-    if season["status"] != "pending":
-        return jsonify({"error": "Só é possível excluir temporadas com status 'pendente'"}), 400
-    db["data"] = [s for s in db["data"] if s["id"] != season_id]
-    write_json("seasons.json", db)
-    return jsonify({"ok": True})
+
+    body = request.get_json(silent=True) or {}
+    # Temporada pendente: exclusão direta. Com dados (active/closed): exige confirmação.
+    if season.get("status") != "pending" and body.get("confirm") is not True:
+        return jsonify({
+            "error": "Esta temporada tem dados (rodadas, resultados). "
+                     "Envie {\"confirm\": true} para excluí-la em cascata.",
+            "status": season.get("status"),
+        }), 400
+
+    counts = _cascade_delete_season(season_id)
+    log_audit("season_deleted", {
+        "season_id": season_id,
+        "season_name": season.get("name"),
+        "cascade": counts,
+    })
+    return jsonify({"ok": True, "deleted": counts})
 
 
 # ---------------------------------------------------------------------------
@@ -3739,11 +3812,46 @@ def ligas_delete(liga_id):
     liga = next((l for l in db["data"] if l["id"] == liga_id), None)
     if not liga:
         return jsonify({"error": "Liga não encontrada"}), 404
-    if liga.get("seasons"):
-        return jsonify({"error": "Remova as temporadas vinculadas antes de excluir a liga"}), 400
+
+    body = request.get_json(silent=True) or {}
+    # Temporadas vinculadas: via liga.seasons e via season.liga_id (defensivo).
+    seasons_db = read_json("seasons.json")
+    linked = set(liga.get("seasons") or [])
+    linked |= {s["id"] for s in seasons_db["data"] if s.get("liga_id") == liga_id}
+
+    if linked and body.get("confirm") is not True:
+        return jsonify({
+            "error": f"Esta liga tem {len(linked)} temporada(s) vinculada(s). "
+                     "Envie {\"confirm\": true} para excluir a liga e todas as temporadas em cascata.",
+            "seasons_count": len(linked),
+        }), 400
+
+    details = [{"season_id": sid, **_cascade_delete_season(sid)} for sid in linked]
+
+    # Remove títulos/premiações desta liga.
+    titles_db = read_json("titles.json")
+    before = len(titles_db["data"])
+    titles_db["data"] = [t for t in titles_db["data"] if t.get("liga_id") != liga_id]
+    titles_removed = before - len(titles_db["data"])
+    if titles_removed:
+        write_json("titles.json", titles_db)
+
+    # Recarrega ligas.json (o cascade pode tê-lo reescrito ao desvincular) e remove a liga.
+    db = read_json("ligas.json")
     db["data"] = [l for l in db["data"] if l["id"] != liga_id]
     write_json("ligas.json", db)
-    return jsonify({"ok": True})
+    log_audit("liga_deleted", {
+        "liga_id": liga_id,
+        "liga_name": liga.get("name"),
+        "seasons_deleted": len(linked),
+        "titles_removed": titles_removed,
+    })
+    return jsonify({
+        "ok": True,
+        "seasons_deleted": len(linked),
+        "titles_removed": titles_removed,
+        "details": details,
+    })
 
 
 @app.route("/api/ligas/<liga_id>/ranking")
