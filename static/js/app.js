@@ -2992,6 +2992,29 @@ async function renderAdminRodada(content) {
       });
     });
 
+    // Cancel empty round buttons
+    content.querySelectorAll('.btn-cancel-round').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const roundId = btn.dataset.roundId;
+        confirmModal(
+          'Cancelar Rodada',
+          'Cancelar esta rodada? Só é permitido para rodadas vazias (sem resultados lançados). A rodada não contará para o ranking nem bloqueará o fechamento da temporada.',
+          async () => {
+            btn.disabled = true; btn.textContent = 'Cancelando…';
+            try {
+              await api(`/api/rounds/${roundId}/cancel`, { method: 'POST', body: {} });
+              showToast('Rodada cancelada com sucesso.', 'success');
+              await loadAndPaint(season);
+            } catch (err) {
+              showToast(`Erro: ${err.message}`, 'error');
+              btn.disabled = false; btn.innerHTML = '🗑 Cancelar Rodada';
+            }
+          },
+          'Cancelar Rodada'
+        );
+      });
+    });
+
     // Reopen closed round buttons
     content.querySelectorAll('.btn-reopen-round').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -3189,12 +3212,17 @@ function renderRoundCard(round, season) {
               ✓ Autorizar Sorteio da Próxima Rodada
             </button>
           </div>` : ''}
-        ${round.status !== 'closed' && round.status !== 'cancelled' && round.status !== 'pending' ? `
-          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);">
+        ${round.status !== 'closed' && round.status !== 'cancelled' ? `
+          <div style="margin-top:16px;padding-top:12px;border-top:var(--border);display:flex;gap:8px;flex-wrap:wrap;">
             <button class="btn btn-ghost btn-sm btn-close-round" data-round-id="${round.id}"
               style="color:#D94040;"
               title="Encerrar esta rodada manualmente">
               ⊗ Encerrar Rodada
+            </button>
+            <button class="btn btn-ghost btn-sm btn-cancel-round" data-round-id="${round.id}"
+              style="color:#BA7517;"
+              title="Cancelar uma rodada vazia (sem resultados lançados). Não conta para o ranking nem bloqueia o fechamento.">
+              🗑 Cancelar Rodada
             </button>
           </div>` : ''}
         ${round.status === 'closed' ? `

@@ -2406,10 +2406,10 @@ def fechamento_preview(season_id):
     results_db  = read_json("results.json")
     rounds_db   = read_json("rounds.json")
 
-    # Rodadas abertas desta temporada (bloqueio)
+    # Rodadas abertas desta temporada (bloqueio). Rodadas canceladas não bloqueiam.
     open_rounds = [
         r for r in rounds_db["data"]
-        if r.get("season_id") == season_id and r.get("status") != "closed"
+        if r.get("season_id") == season_id and r.get("status") not in ("closed", "cancelled")
     ]
 
     category_setup = season.get("category_setup", {})
@@ -2542,7 +2542,7 @@ def fechamento_apply(season_id):
     rounds_db = read_json("rounds.json")
     open_rounds = [
         r for r in rounds_db["data"]
-        if r.get("season_id") == season_id and r.get("status") != "closed"
+        if r.get("season_id") == season_id and r.get("status") not in ("closed", "cancelled")
     ]
     if open_rounds:
         nums = ", ".join(str(r.get("round_number", "?")) for r in open_rounds)
@@ -3255,6 +3255,49 @@ def round_close(round_id):
         "round": _enrich_round(rnd, athletes_by_id),
         "warning": f"{missing} grupo(s) sem resultado confirmado." if missing else None,
     })
+
+
+@app.route("/api/rounds/<round_id>/cancel", methods=["POST"])
+@require_admin
+def round_cancel(round_id):
+    """Cancela uma rodada vazia (sem resultados lançados).
+
+    Uma rodada cancelada não bloqueia o fechamento da temporada e não conta
+    para o ranking. Só é permitido cancelar rodadas que não tenham nenhum
+    resultado confirmado ou contestado.
+    """
+    rounds_db  = read_json("rounds.json")
+    results_db = read_json("results.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd.get("status") == "cancelled":
+        return jsonify({"error": "Rodada já cancelada"}), 400
+    if rnd.get("status") == "closed":
+        return jsonify({"error": "Rodada encerrada não pode ser cancelada. Reabra-a primeiro."}), 400
+
+    # Só permite cancelar rodada vazia: sem resultados confirmados ou contestados.
+    played = [
+        r for r in results_db["data"]
+        if r.get("round_id") == round_id and r.get("status") in ("confirmed", "contested")
+    ]
+    if played:
+        return jsonify({
+            "error": f"Esta rodada tem {len(played)} resultado(s) lançado(s) e não pode ser cancelada. "
+                     "Encerre a rodada normalmente.",
+            "played_count": len(played),
+        }), 400
+
+    rnd["status"] = "cancelled"
+    rnd["cancelled_at"] = now_iso()
+    write_json("rounds.json", rounds_db)
+    log_audit("round_cancelled", {
+        "round_id": round_id,
+        "round_number": rnd.get("round_number"),
+        "season_id": rnd.get("season_id"),
+    })
+    athletes_by_id = {a["id"]: a for a in read_json("athletes.json")["data"]}
+    return jsonify(_enrich_round(rnd, athletes_by_id))
 
 
 @app.route("/api/seasons/<season_id>/ranking/export.csv")
