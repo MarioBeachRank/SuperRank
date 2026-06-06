@@ -3694,7 +3694,7 @@ async function renderMesaHome(content, ctx) {
           deltaTag = `<span class="rank-tbl-delta rank-tbl-down">▼${Math.abs(delta)}</span>`;
       }
       return `<div class="mini-rank-row${isMe ? ' mini-rank-me' : ''}">
-        <span class="mini-rank-pos">${medal || pos + '°'}</span>
+        <span class="mini-rank-pos">${(r.results_count ?? 0) === 0 ? '<span class="rank-unranked">–</span>' : (medal || pos + '°')}</span>
         <span class="mini-rank-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mini-rank-you">você</span>' : ''}${deltaTag}</span>
         <span class="mini-rank-pts">${r.points} pts</span>
       </div>`;
@@ -3726,10 +3726,12 @@ async function renderMesaHome(content, ctx) {
 
   const catTotal = catRanking.length;
   const rank = myRank?.rank;
+  // Atleta sem rodadas jogadas: ainda não tem posição legítima.
+  const notPlayed = (myRank?.results_count ?? 0) === 0;
 
-  // Promo/releg: textos concretos (pts de distância)
+  // Promo/releg: textos concretos (pts de distância). Só faz sentido após jogar.
   let promoRelegHtml = '';
-  if (myRank && catTotal > 0) {
+  if (myRank && catTotal > 0 && !notPlayed) {
     const m = catTotal >= 8 ? 2 : 1;
     const showPromo = athleteCat !== 'A';
     const showReleg = athleteCat !== 'D';
@@ -3828,7 +3830,7 @@ async function renderMesaHome(content, ctx) {
         <span class="badge badge-cat-${athleteCat?.toLowerCase()}">${catLabel(athleteCat)}</span>
       </div>
       <div class="mesa-hero-rank-block">
-        <span class="mesa-hero-rank-pos">${rank}°</span>
+        <span class="mesa-hero-rank-pos">${notPlayed ? '–' : rank + '°'}</span>
         <div class="mesa-hero-pts-block">
           <div class="mesa-hero-pts-value">${myRank.points}</div>
           <div class="mesa-hero-pts-label">pontos</div>
@@ -3949,7 +3951,7 @@ async function renderMesaHome(content, ctx) {
         <a href="#mesa/ranking" class="card" style="display:block;text-align:center;text-decoration:none;">
           <p style="font-size:20px;margin-bottom:4px;">🏆</p>
           <p style="font-size:13px;font-weight:600;">Ranking</p>
-          ${myRank ? `<p style="font-size:11px;color:var(--color-text-muted);">${myRank.rank}° lugar</p>` : ''}
+          ${myRank ? `<p style="font-size:11px;color:var(--color-text-muted);">${notPlayed ? 'sem jogos ainda' : myRank.rank + '° lugar'}</p>` : ''}
         </a>
       </div>
     </div>`;
@@ -7642,7 +7644,7 @@ async function renderPublicoAtleta(container, athleteId) {
   const cr = profile.current_rank;
   const rankBadgeHtml = cr
     ? `<span class="pub-rank-badge" title="${escapeHtml(cr.season_name)}">
-         ${cr.rank}° de ${cr.total} · ${catLabel(cr.cat)}
+         ${(cr.results_count ?? 0) === 0 ? 'sem jogos ainda' : `${cr.rank}° de ${cr.total}`} · ${catLabel(cr.cat)}
        </span>`
     : '';
 

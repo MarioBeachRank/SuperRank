@@ -2955,10 +2955,11 @@ def athlete_public_profile(athlete_id):
         entry = next((r for r in ranking if r["athlete_id"] == athlete_id), None)
         if entry:
             current_rank = {
-                "rank":        entry["rank"],
-                "total":       len(ranking),
-                "season_name": active_season["name"],
-                "cat":         cat,
+                "rank":          entry["rank"],
+                "total":         len(ranking),
+                "results_count": entry["results_count"],
+                "season_name":   active_season["name"],
+                "cat":           cat,
             }
     profile["current_rank"] = current_rank
     profile["apelido"] = athlete.get("apelido") or None
