@@ -2796,6 +2796,23 @@ input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
 .dash-ranking-cat-block .ranking-table th:nth-child(2),
 .dash-ranking-cat-block .ranking-table td:nth-child(2) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dash-ranking-cat-block .ranking-table th.num { width: 40px; }
+/* Atleta sem rodadas jogadas: posição "–" neutra (ainda não rankeado) */
+.rank-position.rank-unranked,
+.mesa-ranking-pos .rank-unranked {
+  background: transparent;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  box-shadow: none;
+}
+.ranking-not-started {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
 
 /* =====================================================================
    Sprint 13 — Fluxo de Resultados Aprimorado

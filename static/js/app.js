@@ -44,6 +44,22 @@ function catLabel(cat) {
   return cat ? `<span class="category-pill ${catClass(cat)}">Cat ${cat}</span>` : '—';
 }
 
+// Célula de posição no ranking. Atleta sem rodadas jogadas (results_count==0)
+// não tem posição legítima — mostra "–" em vez de número/medalha.
+function rankCell(entry) {
+  if ((entry.results_count ?? 0) === 0)
+    return `<span class="rank-position rank-unranked" title="Ainda não jogou nenhuma rodada">–</span>`;
+  const medals = ['gold', 'silver', 'bronze'];
+  return `<span class="rank-position ${medals[entry.rank - 1] || ''}">${entry.rank}</span>`;
+}
+
+// Aviso quando ninguém da categoria jogou ainda (início da temporada).
+function rankingNotStartedNote(rows) {
+  const anyPlayed = (rows || []).some(r => (r.results_count ?? 0) > 0);
+  return anyPlayed ? '' :
+    `<div class="ranking-not-started">ℹ️ Classificação começa após a 1ª rodada — todos empatados, sem jogos.</div>`;
+}
+
 function badge(value, map) {
   const cls = map[value] || 'badge';
   return `<span class="badge ${cls}">${value}</span>`;
@@ -1023,7 +1039,7 @@ async function renderPublicoRanking(container, season, selectedSeasonId = null) 
       const rd = r.results_count ?? 0;
 
       return `<tr class="${trClass}">
-        <td><span class="rank-position ${medals[r.rank-1]||''}">${r.rank}</span></td>
+        <td>${rankCell(r)}</td>
         <td><a href="#publico/atleta/${r.athlete_id}" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a>${deltaTag}</td>
         <td class="num ranking-pts">${r.points}</td>
         <td class="num ranking-stat">${r.wins}</td>
@@ -1043,6 +1059,7 @@ async function renderPublicoRanking(container, season, selectedSeasonId = null) 
     });
 
     return `
+      ${rankingNotStartedNote(rows)}
       <table class="ranking-table">
         <thead>
           <tr>
@@ -1379,13 +1396,10 @@ async function renderAdminDashboard(content) {
         const gw = r.games_won ?? '—';
         const gl = r.games_lost ?? '—';
         const rd = r.results_count ?? 0;
-        const zeroFlag = rd === 0
-          ? `<span title="0 rodadas jogadas — inelegível para movimento" style="margin-left:6px;color:#BA7517;font-size:11px;">⚠0R</span>`
-          : '';
 
         withSep.push(`<tr class="${trClass}">
-          <td><span class="rank-position ${medals[r.rank-1]||''}">${r.rank}</span></td>
-          <td><a href="#admin/atletas" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a>${deltaTag}${zeroFlag}</td>
+          <td>${rankCell(r)}</td>
+          <td><a href="#admin/atletas" style="color:inherit;font-weight:600;text-decoration:none;">${escapeHtml(r.nome)}</a>${deltaTag}</td>
           <td class="num ranking-pts">${r.points}</td>
           <td class="num ranking-stat">${r.wins}</td>
           <td class="num ranking-stat">${gw}/${gl}</td>
@@ -1400,6 +1414,7 @@ async function renderAdminDashboard(content) {
       return `
         <div class="dash-ranking-cat-block">
           <div class="dash-ranking-card-title">${catLabel(cat)} <span style="font-weight:400;color:var(--color-text-muted);">· ${n} atleta${n !== 1 ? 's' : ''}</span></div>
+          ${rankingNotStartedNote(rows)}
           <div class="card" style="padding:0;overflow:hidden;">
             <table class="ranking-table">
               <thead>
@@ -4041,7 +4056,7 @@ async function renderMesaRanking(content, ctx, selectedSeasonId = null) {
           deltaTag = `<span class="rank-tbl-delta rank-tbl-down" title="Caiu ${Math.abs(delta)} posição${Math.abs(delta) !== 1 ? 'ões' : ''}">▼${Math.abs(delta)}</span>`;
       }
       return `<tr class="${trClass.trim()}">
-        <td class="mesa-ranking-pos">${medal || (pos + '°')}</td>
+        <td class="mesa-ranking-pos">${rd === 0 ? '<span class="rank-unranked">–</span>' : (medal || (pos + '°'))}</td>
         <td class="mesa-ranking-nome">${escapeHtml(r.nome || r.athlete_id)}${isMe ? ' <span class="mesa-ranking-you-tag">você</span>' : ''}${deltaTag}</td>
         <td class="mesa-ranking-pts">${r.points}</td>
         <td class="mesa-ranking-stat">${r.wins}</td>
@@ -4067,7 +4082,7 @@ async function renderMesaRanking(content, ctx, selectedSeasonId = null) {
       }
     });
 
-    return `<table class="mesa-ranking-table">
+    return `${rankingNotStartedNote(rows)}<table class="mesa-ranking-table">
       <thead><tr>
         <th>#</th><th>Atleta</th><th>Pts</th><th>V</th><th>Games</th><th>R</th>
       </tr></thead>
