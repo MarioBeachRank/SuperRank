@@ -662,6 +662,7 @@ async function route() {
     const me = await api('/api/auth/me').catch(() => ({ is_admin: false }));
     if (!me.is_admin) { location.hash = '#login'; return; }
     state.isAdmin = true;
+    state.linkedAtleta = me.atleta || null;  // atleta vinculado → habilita "Ver como atleta"
     // Fetch admin role if not yet loaded
     if (!state.adminRole) {
       try {
@@ -679,6 +680,7 @@ async function route() {
     const me = await api('/api/auth/me').catch(() => ({ atleta: null }));
     if (!me.atleta) { location.hash = '#login'; return; }
     state.atleta = me.atleta;
+    state.mesaIsAdmin = me.is_admin === true;  // veio do admin → habilita "Voltar ao Admin"
     setPageTitle(`mesa/${sub || 'home'}`);
     renderMesa(sub);
     return;
@@ -1243,8 +1245,34 @@ async function renderAdmin(sub) {
   app.querySelector('#btn-logout').addEventListener('click', async () => {
     await api('/api/auth/logout', { method: 'POST' });
     state.isAdmin = false; state.adminRole = null; state.adminUsername = null;
+    state.linkedAtleta = null; state.mesaIsAdmin = false;
     location.hash = '#login';
   });
+
+  // Toggle "Ver como atleta" — só se o admin tem perfil de atleta vinculado.
+  if (state.linkedAtleta) {
+    const goAtleta = e => { e?.preventDefault?.(); location.hash = '#mesa/home'; };
+    const logoutBtn = app.querySelector('#btn-logout');
+    if (logoutBtn) {
+      const b = document.createElement('button');
+      b.className = 'btn btn-ghost btn-full';
+      b.style.cssText = 'margin-bottom:8px;color:var(--color-primary);';
+      b.textContent = '→ Ver como atleta';
+      b.addEventListener('click', goAtleta);
+      logoutBtn.insertAdjacentElement('beforebegin', b);
+    }
+    const userLabel = app.querySelector('#admin-user-label');
+    if (userLabel) {
+      const tb = document.createElement('button');
+      tb.className = 'btn btn-ghost btn-sm';
+      tb.style.cssText = 'margin-left:auto;color:var(--color-primary);';
+      tb.textContent = '→ Atleta';
+      tb.title = 'Ver como atleta';
+      tb.addEventListener('click', goAtleta);
+      userLabel.style.marginLeft = '8px';
+      userLabel.insertAdjacentElement('beforebegin', tb);
+    }
+  }
 
   // Mostrar link de Admins só para super
   if (state.adminRole === 'super') {
@@ -3570,9 +3598,23 @@ async function renderMesa(sub) {
 
   app.querySelector('#btn-mesa-logout').addEventListener('click', async () => {
     await api('/api/auth/logout', { method: 'POST' });
-    state.atleta = null;
+    state.atleta = null; state.isAdmin = false; state.mesaIsAdmin = false; state.linkedAtleta = null;
     location.hash = '#login';
   });
+
+  // Toggle "← Voltar ao Admin" — só se a sessão também é admin (veio do admin).
+  if (state.mesaIsAdmin) {
+    const strip = app.querySelector('#btn-mesa-logout')?.parentElement;
+    if (strip) {
+      const back = document.createElement('button');
+      back.className = 'btn btn-ghost btn-sm';
+      back.style.cssText = 'color:var(--color-primary);margin-right:4px;';
+      back.textContent = '← Admin';
+      back.title = 'Voltar ao painel de admin';
+      back.addEventListener('click', () => { location.hash = '#admin/dashboard'; });
+      strip.insertAdjacentElement('afterbegin', back);
+    }
+  }
 
   const content = app.querySelector('#mesa-content');
 
