@@ -8,7 +8,7 @@ import hashlib
 import functools
 import urllib.parse
 from datetime import datetime
-from flask import Flask, jsonify, render_template, request, session, g
+from flask import Flask, jsonify, render_template, request, session, g, send_from_directory
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -3206,9 +3206,18 @@ _PHOTO_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
 
 
 def _photo_upload_dir():
-    path = os.path.join(app.root_path, "static", "uploads", "photos")
+    # Fotos no DATA_DIR (volume persistente), NÃO no diretório de código do app
+    # (que é efêmero no Railway e some a cada deploy).
+    path = os.path.join(DATA_DIR, "uploads", "photos")
     os.makedirs(path, exist_ok=True)
     return path
+
+
+@app.route("/uploads/photos/<path:filename>")
+def serve_photo(filename):
+    """Serve as fotos a partir do volume persistente (DATA_DIR/uploads/photos).
+    send_from_directory protege contra path traversal."""
+    return send_from_directory(_photo_upload_dir(), filename)
 
 
 def _photo_auth(athlete_id):
@@ -3256,7 +3265,7 @@ def athlete_photo_upload(athlete_id):
     filename = f"{athlete_id}.{ext}"
     file.save(os.path.join(upload_dir, filename))
 
-    photo_url = f"/static/uploads/photos/{filename}"
+    photo_url = f"/uploads/photos/{filename}"
     athlete["photo_url"] = photo_url
     write_json("athletes.json", athletes_db)
     return jsonify({"ok": True, "photo_url": photo_url})
@@ -3727,8 +3736,10 @@ def mesa_profile_update():
     if not apelido:
         return jsonify({"error": "Apelido não pode ser vazio"}), 400
 
+    # birth_date só é tocado se o campo foi enviado (evita zerar valor existente).
+    birth_provided = "birth_date" in data
     birth_date = (data.get("birth_date") or "").strip() or None
-    if birth_date:
+    if birth_provided and birth_date:
         try:
             from datetime import date as _date
             _date.fromisoformat(birth_date)
@@ -3747,9 +3758,10 @@ def mesa_profile_update():
         return jsonify({"error": "Este apelido já está em uso"}), 409
 
     athlete["apelido"] = apelido
-    athlete["birth_date"] = birth_date
+    if birth_provided:
+        athlete["birth_date"] = birth_date
     write_json("athletes.json", athletes_db)
-    return jsonify({"ok": True, "apelido": apelido, "birth_date": birth_date})
+    return jsonify({"ok": True, "apelido": apelido, "birth_date": athlete.get("birth_date")})
 
 
 @app.route("/api/mesa/profile/pin", methods=["PUT"])
