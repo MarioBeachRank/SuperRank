@@ -941,6 +941,20 @@ async function renderPublico(sub) {
       l.classList.add('active');
   });
 
+  // Cabeçalho ciente da sessão: quem está logado vê "Voltar", não "Entrar".
+  // (navegar pelo público NÃO desloga — a sessão permanece intacta.)
+  api('/api/auth/me').then(me => {
+    const authBtn = app.querySelector('#publico-auth-btn');
+    if (!authBtn) return;
+    if (me.atleta) {
+      authBtn.textContent = '← Voltar à Mesa';
+      authBtn.setAttribute('href', '#mesa/home');
+    } else if (me.is_admin) {
+      authBtn.textContent = '← Voltar ao Admin';
+      authBtn.setAttribute('href', '#admin/dashboard');
+    }
+  }).catch(() => {});
+
   let seasons = [];
   try { seasons = await api('/api/seasons'); } catch (_) {}
 
