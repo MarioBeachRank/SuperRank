@@ -1588,6 +1588,15 @@ select.field-input {
 
   #toast-container { bottom: 80px; right: 12px; left: 12px; }
   .toast { max-width: 100%; }
+
+  /* Padrao unico: toda tabela admin rola na horizontal no mobile em vez de
+     estourar/cortar. (A tela de atletas ja usa cards via JS.) */
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
 }
 
 /* =====================================================================
