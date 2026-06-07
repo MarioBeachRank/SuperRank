@@ -3202,7 +3202,7 @@ def athlete_ranking_history(athlete_id):
 
 
 _PHOTO_ALLOWED_MIMES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-_PHOTO_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+_PHOTO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB (rede de segurança; o cliente já reduz a foto antes de enviar)
 
 
 def _photo_upload_dir():
@@ -3251,7 +3251,7 @@ def athlete_photo_upload(athlete_id):
     size = file.tell()
     file.seek(0)
     if size > _PHOTO_MAX_BYTES:
-        return jsonify({"error": "Arquivo muito grande. Máximo 2 MB."}), 400
+        return jsonify({"error": "Arquivo muito grande. Máximo 10 MB."}), 400
 
     ext = _PHOTO_ALLOWED_MIMES[mime]
     upload_dir = _photo_upload_dir()

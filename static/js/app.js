@@ -570,6 +570,33 @@ function showToast(msg, type = 'success') {
 // Avatar helper — foto circular, fallback para inicial
 // ---------------------------------------------------------------------------
 
+// Redimensiona/comprime a foto no navegador ANTES de enviar (≤maxDim, JPEG).
+// Resolve fotos grandes de celular (iPhone) sem subir o arquivo inteiro pelo
+// 4G e corrige a orientação EXIF. Se algo falhar, devolve o arquivo original.
+async function resizeImageForUpload(file, maxDim = 512, quality = 0.85) {
+  if (!file || !(file.type || '').startsWith('image/')) return file;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (_) {
+    try { bitmap = await createImageBitmap(file); } catch (_) { return file; }
+  }
+  try {
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    if (!blob) return file;
+    return new File([blob], 'photo.jpg', { type: 'image/jpeg' });
+  } catch (_) {
+    return file;
+  }
+}
+
 function avatarHtml(photoUrl, name, size = 48) {
   const initial = (name || '?').charAt(0).toUpperCase();
   const style = `width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;`;
@@ -1889,11 +1916,11 @@ function openAtletaModal(atleta = null) {
     admPhotoInput?.addEventListener('change', async () => {
       const file = admPhotoInput.files[0];
       if (!file) return;
-      if (file.size > 2 * 1024 * 1024) { admPhotoMsg.textContent = 'Máximo 2 MB.'; admPhotoMsg.style.color='#D94040'; admPhotoMsg.style.display='block'; return; }
       const localUrl = URL.createObjectURL(file);
       if (admPhotoPreview) admPhotoPreview.innerHTML = avatarHtml(localUrl, atleta.apelido || atleta.nome, 48);
+      const upload = await resizeImageForUpload(file);
       const fd = new FormData();
-      fd.append('photo', file);
+      fd.append('photo', upload);
       admPhotoMsg.style.display = 'none';
       try {
         const res = await api(`/api/athletes/${atleta.id}/photo`, { method: 'POST', body: fd });
@@ -8095,7 +8122,7 @@ async function renderMesaPerfil(content) {
               : ''}
           </div>
         </div>
-        <p style="font-size:11px;color:var(--color-text-muted);margin:0 0 4px;">JPEG · PNG · WebP · máx 2 MB</p>
+        <p style="font-size:11px;color:var(--color-text-muted);margin:0 0 4px;">A foto é otimizada automaticamente — pode enviar direto do celular.</p>
         <p id="photo-msg" class="hidden" style="font-size:13px;margin-top:6px;"></p>
       </div>
 
@@ -8305,17 +8332,18 @@ async function renderMesaPerfil(content) {
   photoInput?.addEventListener('change', async () => {
     const file = photoInput.files[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { showPhotoMsg('Arquivo muito grande. Máximo 2 MB.', false); return; }
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) { showPhotoMsg('Formato inválido. Use JPEG, PNG ou WebP.', false); return; }
 
-    // Local preview
+    // Local preview (original) + redimensiona/comprime antes de enviar
     const localUrl = URL.createObjectURL(file);
     if (photoPreview) photoPreview.innerHTML = avatarHtml(localUrl, displayNomeMesa, 60);
     if (headerAvatar) headerAvatar.innerHTML = avatarHtml(localUrl, displayNomeMesa, 64);
 
+    const upload = await resizeImageForUpload(file);
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(upload.type)) { showPhotoMsg('Não foi possível processar esta imagem. Tente uma foto JPEG/PNG.', false); return; }
+
     const fd = new FormData();
-    fd.append('photo', file);
+    fd.append('photo', upload);
     photoMsg.classList.add('hidden');
     try {
       const res = await api(`/api/athletes/${profile.id}/photo`, { method: 'POST', body: fd });
