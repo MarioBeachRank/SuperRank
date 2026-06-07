@@ -2251,7 +2251,8 @@ function openAtletaPicker(cat, role, season, onSaved) {
            style="margin-bottom:8px;width:100%;" />
     <div class="picker-list" id="picker-list">
       ${renderPickerItems(available)}
-    </div>`;
+    </div>
+    <p id="picker-hint" class="field-hint" style="margin-top:10px;"></p>`;
 
   const modalFooter = `
     <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -2266,6 +2267,32 @@ function openAtletaPicker(cat, role, season, onSaved) {
   function updateAddBtn() {
     const checked = listEl.querySelectorAll('.picker-check:checked');
     const n = checked.length;
+    const hintEl = document.getElementById('picker-hint');
+
+    // Titular tem regra de múltiplo de 4 (Art. 5): dá feedback preventivo e
+    // só habilita "Adicionar" quando o total projetado fecha em múltiplo de 4.
+    if (role === 'titular') {
+      const proj = currentSetup.titular_ids.length + n;
+      const ok = proj % 4 === 0;
+      if (hintEl) {
+        if (n === 0) {
+          hintEl.textContent = '';
+        } else if (ok) {
+          hintEl.textContent = `✓ Titulares ficarão em ${proj} (múltiplo de 4).`;
+          hintEl.style.color = 'var(--color-cat-b)';
+        } else {
+          hintEl.textContent = `⚠ Titulares ficarão em ${proj} — selecione um total que feche em múltiplo de 4 (Art. 5).`;
+          hintEl.style.color = '#BA7517';
+        }
+      }
+      addBtn.disabled = (n === 0) || !ok;
+      addBtn.textContent = n === 0 ? 'Selecione atletas'
+        : ok ? `Adicionar ${n} atleta${n !== 1 ? 's' : ''}`
+        : 'Ajuste para múltiplo de 4';
+      return;
+    }
+
+    if (hintEl) hintEl.textContent = '';
     addBtn.disabled   = n === 0;
     addBtn.textContent = n === 0 ? 'Selecione atletas' : `Adicionar ${n} atleta${n !== 1 ? 's' : ''}`;
   }
