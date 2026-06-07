@@ -259,6 +259,21 @@ def index():
 # Auth
 # ---------------------------------------------------------------------------
 
+def _attach_linked_athlete(admin):
+    """Se o admin tem athlete_id vinculado (e o atleta existe/ativo), popula
+    também a sessão de atleta — login admin único vira sessão com os 2 papéis."""
+    if not admin or not admin.get("athlete_id"):
+        return
+    ath = next(
+        (a for a in read_json("athletes.json")["data"]
+         if a["id"] == admin["athlete_id"] and a.get("status") == "ativo"),
+        None,
+    )
+    if ath:
+        session["atleta_id"] = ath["id"]
+        session["atleta_nome"] = ath.get("nome")
+
+
 @app.route("/api/auth/admin", methods=["POST"])
 def auth_admin():
     body = request.get_json(silent=True) or {}
@@ -283,6 +298,7 @@ def auth_admin():
             session["admin_id"]       = admin_id
             session["admin_role"]     = "super"
             session["admin_username"] = env_admin["username"] if env_admin else "admin"
+            _attach_linked_athlete(env_admin)
             return jsonify({"ok": True, "role": "super", "username": session["admin_username"]})
         return jsonify({"ok": False, "error": "Senha incorreta"}), 401
 
@@ -298,6 +314,7 @@ def auth_admin():
     session["admin_id"]       = admin["id"]
     session["admin_role"]     = admin.get("role", "staff")
     session["admin_username"] = admin["username"]
+    _attach_linked_athlete(admin)
     return jsonify({"ok": True, "role": admin["role"], "username": admin["username"]})
 
 
@@ -469,12 +486,115 @@ def admins_delete(admin_id):
 @app.route("/api/auth/admin/me")
 @require_admin
 def admin_me():
-    """Retorna dados do admin logado (para o frontend saber o role)."""
+    """Retorna dados do admin logado (role + atleta vinculado, se houver)."""
+    admin_id = session.get("admin_id")
+    admin = next((a for a in read_json("admins.json")["data"] if a["id"] == admin_id), None)
+    linked = None
+    if admin and admin.get("athlete_id"):
+        ath = next((a for a in read_json("athletes.json")["data"] if a["id"] == admin["athlete_id"]), None)
+        if ath:
+            linked = {"id": ath["id"], "nome": ath.get("nome"), "apelido": ath.get("apelido")}
     return jsonify({
-        "id":       session.get("admin_id"),
+        "id":       admin_id,
         "role":     session.get("admin_role", "staff"),
         "username": session.get("admin_username", "admin"),
+        "athlete":  linked,   # perfil de atleta vinculado (ou null)
     })
+
+
+@app.route("/api/admin/athlete-profile", methods=["POST"])
+@require_admin
+@transactional
+def admin_create_athlete_profile():
+    """Cria (ou vincula) o perfil de atleta do admin logado, para que o login
+    admin único abra também o painel de atleta.
+
+    Body:
+      - {"link_athlete_id": "..."}  → vincula a um atleta existente; ou
+      - {"nome","apelido","pin?","telefone?","desired_category?"} → cria novo.
+    Rede de segurança: se já existir atleta com mesmo nome/telefone, devolve
+    409 com conflict+athlete para o front oferecer vincular ao existente.
+    """
+    admin_id = session.get("admin_id")
+    admins_db = read_json("admins.json")
+    admin = next((a for a in admins_db["data"] if a["id"] == admin_id), None)
+    if not admin:
+        return jsonify({"error": "Admin não encontrado. Faça login novamente."}), 404
+    if admin.get("athlete_id"):
+        return jsonify({"error": "Você já tem um perfil de atleta vinculado."}), 409
+
+    body = request.get_json(silent=True) or {}
+    athletes_db = read_json("athletes.json")
+
+    # Caminho 1 — vincular a um atleta existente
+    link_id = body.get("link_athlete_id")
+    if link_id:
+        ath = next((a for a in athletes_db["data"] if a["id"] == link_id), None)
+        if not ath:
+            return jsonify({"error": "Atleta não encontrado"}), 404
+        if any(a.get("athlete_id") == link_id for a in admins_db["data"]):
+            return jsonify({"error": "Esse atleta já está vinculado a outro admin."}), 409
+        admin["athlete_id"] = link_id
+        write_json("admins.json", admins_db)
+        session["atleta_id"] = ath["id"]
+        session["atleta_nome"] = ath.get("nome")
+        log_audit("admin_athlete_linked", {"admin_id": admin_id, "athlete_id": link_id})
+        return jsonify({"ok": True, "linked": True,
+                        "athlete": {"id": ath["id"], "nome": ath.get("nome"), "apelido": ath.get("apelido")}})
+
+    # Caminho 2 — criar novo (com rede de segurança contra duplicado)
+    nome     = (body.get("nome") or "").strip()
+    apelido  = (body.get("apelido") or "").strip()
+    pin      = (body.get("pin") or "").strip()
+    telefone = re.sub(r'\D', '', str(body.get("telefone") or ""))
+    desired  = body.get("desired_category")
+    if not nome:
+        return jsonify({"error": "Nome completo é obrigatório"}), 400
+    if not apelido:
+        return jsonify({"error": "Apelido é obrigatório"}), 400
+    if pin and (not pin.isdigit() or len(pin) != 4):
+        return jsonify({"error": "PIN deve ter 4 dígitos numéricos"}), 400
+
+    # Rede de segurança: mesmo nome OU telefone → provavelmente é a mesma pessoa.
+    existing = next(
+        (a for a in athletes_db["data"]
+         if a["nome"].strip().lower() == nome.lower()
+         or (telefone and re.sub(r'\D', '', str(a.get("telefone") or "")) == telefone)),
+        None,
+    )
+    if existing:
+        return jsonify({
+            "error": "Já existe um atleta com esse nome ou telefone.",
+            "conflict": True,
+            "athlete": {"id": existing["id"], "nome": existing.get("nome"), "apelido": existing.get("apelido")},
+        }), 409
+    if any((a.get("apelido") or "").strip().lower() == apelido.lower() for a in athletes_db["data"]):
+        return jsonify({"error": "Este apelido já está em uso."}), 409
+
+    athlete = {
+        "id": str(uuid.uuid4()),
+        "nome": nome,
+        "apelido": apelido,
+        "pin_hash": hash_pin(pin) if pin else None,
+        "type": "reserva",
+        "current_category": None,
+        "desired_category": desired if desired in ("B", "C", "D") else None,
+        "admin_confirmed": False,
+        "status": "ativo",
+        "telefone": telefone or None,
+        "birth_date": None,
+        "created_at": now_iso(),
+        "category_history": [],
+    }
+    athletes_db["data"].append(athlete)
+    write_json("athletes.json", athletes_db)
+    admin["athlete_id"] = athlete["id"]
+    write_json("admins.json", admins_db)
+    session["atleta_id"] = athlete["id"]
+    session["atleta_nome"] = athlete["nome"]
+    log_audit("admin_athlete_profile_created", {"admin_id": admin_id, "athlete_id": athlete["id"]})
+    return jsonify({"ok": True, "created": True,
+                    "athlete": {k: v for k, v in athlete.items() if k != "pin_hash"}}), 201
 
 
 # ---------------------------------------------------------------------------
