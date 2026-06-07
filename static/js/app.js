@@ -6173,7 +6173,10 @@ async function renderAdminFechamento(content, selectedSeasonId = null) {
       ${openRoundsCount} rodada${openRoundsCount > 1 ? 's' : ''} ainda aberta${openRoundsCount > 1 ? 's' : ''}:
       ${openRounds.map(r => `Rodada ${r.round_number}`).join(', ')}.
       Feche todas as rodadas antes de encerrar a temporada.
-      <a href="#admin/rodada" style="margin-left:8px;">Ir para Rodadas →</a>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button id="btn-close-pending" class="btn btn-primary btn-sm">⚡ Fechar rodadas pendentes</button>
+        <a href="#admin/rodada" class="btn btn-ghost btn-sm">Ir para Rodadas →</a>
+      </div>
     </div>` : '';
 
   // Avisos de inelegibilidade
@@ -6254,6 +6257,30 @@ async function renderAdminFechamento(content, selectedSeasonId = null) {
 
   content.querySelector('#fechamento-season-sel')?.addEventListener('change', e => {
     renderAdminFechamento(content, e.target.value);
+  });
+
+  content.querySelector('#btn-close-pending')?.addEventListener('click', () => {
+    confirmModal(
+      'Fechar rodadas pendentes',
+      `Encerrar todas as ${openRoundsCount} rodada(s) aberta(s) desta temporada? Rodadas com resultados contestados são puladas (resolva-as antes).`,
+      async () => {
+        const btn = content.querySelector('#btn-close-pending');
+        if (btn) { btn.disabled = true; btn.textContent = 'Fechando…'; }
+        try {
+          const res = await api(`/api/seasons/${selectedSeason.id}/rounds/close-pending`, { method: 'POST', body: {} });
+          if (res.blocked && res.blocked.length) {
+            showToast(`${res.closed} rodada(s) fechada(s); ${res.blocked.length} bloqueada(s) por contestação.`, 'info');
+          } else {
+            showToast(`${res.closed} rodada(s) fechada(s).`, 'success');
+          }
+          renderAdminFechamento(content, selectedSeason.id);
+        } catch (err) {
+          showToast('Erro: ' + err.message, 'error');
+          if (btn) { btn.disabled = false; btn.innerHTML = '⚡ Fechar rodadas pendentes'; }
+        }
+      },
+      'Fechar todas'
+    );
   });
 
   content.querySelector('#btn-fechar-temporada')?.addEventListener('click', () => {

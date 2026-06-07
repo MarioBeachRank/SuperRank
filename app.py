@@ -3426,6 +3426,49 @@ def round_close(round_id):
     })
 
 
+@app.route("/api/seasons/<season_id>/rounds/close-pending", methods=["POST"])
+@require_admin
+def close_pending_rounds(season_id):
+    """Fecha todas as rodadas pendentes (abertas) da temporada de uma vez.
+
+    Pula rodadas com resultados contestados (precisam de resolução antes).
+    Retorna quantas fechou e quais ficaram bloqueadas.
+    """
+    rounds_db  = read_json("rounds.json")
+    results_db = read_json("results.json")
+    pending = [
+        r for r in rounds_db["data"]
+        if r.get("season_id") == season_id and r.get("status") not in ("closed", "cancelled")
+    ]
+    closed, blocked, closed_objs = [], [], []
+    for rnd in pending:
+        contested = [
+            r for r in results_db["data"]
+            if r.get("round_id") == rnd["id"] and r.get("status") == "contested"
+        ]
+        if contested:
+            blocked.append({
+                "round_number": rnd.get("round_number"),
+                "reason": f"{len(contested)} resultado(s) contestado(s)",
+            })
+            continue
+        rnd["status"] = "closed"
+        rnd["closed_at"] = now_iso()
+        closed.append(rnd.get("round_number"))
+        closed_objs.append(rnd)
+
+    if closed_objs:
+        write_json("rounds.json", rounds_db)
+        for rnd in closed_objs:
+            _save_ranking_snapshot(rnd, results_db["data"])
+        log_audit("rounds_close_pending", {
+            "season_id": season_id,
+            "closed": closed,
+            "blocked_count": len(blocked),
+        })
+    return jsonify({"closed": len(closed), "closed_rounds": closed, "blocked": blocked})
+
+
 @app.route("/api/rounds/<round_id>/cancel", methods=["POST"])
 @require_admin
 def round_cancel(round_id):
