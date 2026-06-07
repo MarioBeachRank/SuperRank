@@ -1878,6 +1878,98 @@ def submit_result(round_id):
     return jsonify(_enrich_result(result_record, athletes_by_id)), 201
 
 
+@app.route("/api/rounds/<round_id>/results/batch", methods=["POST"])
+@require_admin
+def submit_results_batch(round_id):
+    """Admin lança vários resultados de uma rodada de uma vez.
+
+    Body: {"results": [{"cat", "group_idx", "sets"}, ...]}.
+    Valida cada grupo; aplica os válidos numa só gravação e retorna os que
+    falharam (placar inválido etc.). Admin sobrescreve resultados existentes.
+    """
+    from engines.score_engine import validate_group_scores, calculate_group_result
+
+    rounds_db = read_json("rounds.json")
+    rnd = next((r for r in rounds_db["data"] if r["id"] == round_id), None)
+    if not rnd:
+        return jsonify({"error": "Rodada não encontrada"}), 404
+    if rnd.get("status") == "closed":
+        return jsonify({"error": "Rodada encerrada — use o override para corrigir."}), 400
+
+    body = request.get_json(silent=True) or {}
+    items = body.get("results")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "Campo 'results' (lista) é obrigatório"}), 400
+
+    groups_all = rnd.get("groups") or {}
+    results_db = read_json("results.json")
+    saved, failed = [], []
+
+    for it in items:
+        cat = (it or {}).get("cat")
+        gi  = (it or {}).get("group_idx")
+        sets = (it or {}).get("sets")
+        if cat not in groups_all:
+            failed.append({"cat": cat, "group_idx": gi, "error": "Categoria inválida"}); continue
+        groups_cat = groups_all[cat]
+        if not isinstance(gi, int) or gi < 0 or gi >= len(groups_cat):
+            failed.append({"cat": cat, "group_idx": gi, "error": "Índice de grupo inválido"}); continue
+        if not isinstance(sets, list):
+            failed.append({"cat": cat, "group_idx": gi, "error": "Placar ausente"}); continue
+        errs = validate_group_scores(sets)
+        if errs:
+            failed.append({"cat": cat, "group_idx": gi, "error": "; ".join(errs)}); continue
+
+        group = groups_cat[gi]
+        score_result = calculate_group_result(group, sets)
+        # Admin sobrescreve: remove resultado anterior do mesmo grupo.
+        results_db["data"] = [
+            r for r in results_db["data"]
+            if not (r["round_id"] == round_id and r["cat"] == cat and r["group_idx"] == gi)
+        ]
+        confirmations = {aid: "confirmed" for aid in group if aid.startswith("guest_")}
+        results_db["data"].append({
+            "id": str(uuid.uuid4()),
+            "round_id": round_id,
+            "season_id": rnd["season_id"],
+            "cat": cat,
+            "group_idx": gi,
+            "group": group,
+            "sets": sets,
+            "scores": score_result,
+            "status": "pending_confirmation",
+            "submitted_by": "admin",
+            "submitted_at": now_iso(),
+            "confirmations": confirmations,
+            "contests": {},
+        })
+        saved.append({"cat": cat, "group_idx": gi})
+
+    if saved:
+        write_json("results.json", results_db)
+        log_audit("results_batch_submitted", {
+            "round_id": round_id,
+            "round_number": rnd.get("round_number"),
+            "season_id": rnd.get("season_id"),
+            "saved": len(saved),
+            "failed": len(failed),
+        })
+        # Notifica os membros dos grupos salvos para confirmarem.
+        try:
+            for s in saved:
+                for _aid in groups_all[s["cat"]][s["group_idx"]]:
+                    _create_notification(
+                        _aid, "result_submitted",
+                        f"Resultado lançado — Rodada {rnd['round_number']}",
+                        f"Admin lançou o placar do Grupo {s['group_idx']+1} Cat {s['cat']}. Confirme no SuperRank.",
+                        "#mesa/resultado",
+                    )
+        except Exception:
+            pass
+
+    return jsonify({"saved": len(saved), "failed": failed, "saved_groups": saved})
+
+
 @app.route("/api/results/<result_id>/confirm", methods=["POST"])
 @require_atleta
 def confirm_result(result_id):

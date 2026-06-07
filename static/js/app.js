@@ -5482,6 +5482,7 @@ async function renderAdminResultados(content, selectedSeasonId = null) {
             <strong>Rodada ${rnd.round_number}</strong>
             ${periodHtml}
             ${overdueBadge}
+            ${rnd.status !== 'closed' ? `<button class="btn btn-primary btn-sm btn-batch-launch" data-batch-round="${rnd.id}" data-launched='${JSON.stringify(Object.keys(resultsByGroupKey).filter(k => resultsByGroupKey[k].status !== 'contested'))}' style="margin-left:auto;">⚡ Lançar em lote</button>` : ''}
           </div>`;
 
       for (const [cat, groups] of Object.entries(rnd.groups || {})) {
@@ -5550,6 +5551,29 @@ async function renderAdminResultados(content, selectedSeasonId = null) {
     body.innerHTML = html;
     applyFilter(activeCatFilter, activeStatusFilter);
     attachResultadosListeners(body, athletesById, renderRounds);
+
+    // Lançamento em lote (por categoria ativa)
+    body.querySelectorAll('.btn-batch-launch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rnd = rounds.find(r => r.id === btn.dataset.batchRound);
+        if (!rnd) return;
+        const launched = new Set(JSON.parse(btn.dataset.launched || '[]'));
+        const items = [];
+        for (const [cat, groups] of Object.entries(rnd.groups || {})) {
+          if (activeCatFilter !== 'all' && cat !== activeCatFilter) continue;
+          for (let gi = 0; gi < groups.length; gi++) {
+            if (launched.has(`${cat}-${gi}`)) continue;
+            items.push({ cat, gi, group: groups[gi], sets: (rnd.groups_sets?.[cat]?.[gi] || []) });
+          }
+        }
+        if (!items.length) {
+          showToast('Nenhum grupo pendente de lançamento nesta seleção.', 'info');
+          return;
+        }
+        openBatchScoreForm(rnd.id, items, athletesById, renderRounds,
+          activeCatFilter === 'all' ? null : activeCatFilter);
+      });
+    });
   };
 
   await renderRounds();
@@ -5895,6 +5919,90 @@ function openScoreForm(roundId, cat, gi, group, sets, athletesById, refresh) {
     } catch (err) {
       errEl.textContent = err.message;
       errEl.classList.remove('hidden');
+    }
+  });
+}
+
+function openBatchScoreForm(roundId, items, athletesById, refresh, catFilter) {
+  // Monta uma seção por grupo, cada uma com seus blocos de set (reusa helpers).
+  const sectionsHtml = items.map(it => {
+    const prefix = `b${it.cat}_${it.gi}_`;
+    const setsHtml = (it.sets || []).map((setDef, idx) => {
+      const teamA = (setDef.team_a || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
+      const teamB = (setDef.team_b || []).map(aid => athletesById[aid]?.nome || aid).join(' + ');
+      return buildScoreSetBlockHtml(prefix, idx + 1, teamA, teamB, setDef.team_a || [], setDef.team_b || []);
+    }).join('');
+    return `
+      <div class="batch-group-section" style="border:var(--border);border-radius:var(--radius-md);padding:10px 12px;margin-bottom:14px;">
+        <p style="font-weight:700;font-size:14px;margin-bottom:8px;">${catLabel(it.cat)} · Grupo ${it.gi + 1}</p>
+        <div class="score-sets-grid">${setsHtml}</div>
+      </div>`;
+  }).join('');
+
+  openModal(
+    `Lançar em lote${catFilter ? ' — Cat ' + catFilter : ''} · ${items.length} grupo${items.length !== 1 ? 's' : ''}`,
+    `<div class="score-form">
+       <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">
+         Preencha os grupos que quiser. Quem ficar em branco é ignorado. Os 3 sets de um grupo precisam estar completos para salvar.
+       </p>
+       ${sectionsHtml}
+       <p id="batch-error" class="field-error hidden"></p>
+     </div>`,
+    `<button id="btn-batch-salvar" class="btn btn-primary">Salvar todos</button>
+     <button id="btn-batch-cancelar" class="btn btn-ghost">Cancelar</button>`
+  );
+
+  const modalBody = document.getElementById('modal-body');
+  items.forEach(it => attachScorePickerListeners(modalBody, `b${it.cat}_${it.gi}_`, (it.sets || []).map((_, i) => i + 1)));
+
+  document.getElementById('btn-batch-cancelar').addEventListener('click', closeModal);
+  document.getElementById('btn-batch-salvar').addEventListener('click', async () => {
+    const errEl = document.getElementById('batch-error');
+    errEl.classList.add('hidden');
+
+    const payload = [];
+    const problems = [];
+    for (const it of items) {
+      const prefix = `b${it.cat}_${it.gi}_`;
+      const count = (it.sets || []).length || 3;
+      const sp = readScoreSets(modalBody, prefix, count);
+      const anyFilled = sp.some(s => !isNaN(s.score_a) || !isNaN(s.score_b));
+      if (!anyFilled) continue; // grupo deixado em branco — ok, ignora
+      let ok = true;
+      for (const s of sp) {
+        const res = validateSetPair(isNaN(s.score_a) ? null : s.score_a, isNaN(s.score_b) ? null : s.score_b);
+        if (!res || !res.valid) { ok = false; break; }
+      }
+      if (!ok) { problems.push(`Cat ${it.cat} G${it.gi + 1}`); continue; }
+      payload.push({ cat: it.cat, group_idx: it.gi, sets: sp });
+    }
+
+    if (problems.length) {
+      errEl.textContent = `Placar incompleto ou inválido em: ${problems.join(', ')}. Complete os 3 sets ou deixe o grupo em branco.`;
+      errEl.classList.remove('hidden');
+      return;
+    }
+    if (!payload.length) {
+      errEl.textContent = 'Nenhum grupo preenchido.';
+      errEl.classList.remove('hidden');
+      return;
+    }
+
+    const btn = document.getElementById('btn-batch-salvar');
+    btn.disabled = true; btn.textContent = 'Salvando…';
+    try {
+      const res = await api(`/api/rounds/${roundId}/results/batch`, { method: 'POST', body: { results: payload } });
+      closeModal();
+      if (res.failed && res.failed.length) {
+        showToast(`${res.saved} salvo(s); ${res.failed.length} com erro.`, 'info');
+      } else {
+        showToast(`${res.saved} resultado(s) lançado(s).`, 'success');
+      }
+      await refresh();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.classList.remove('hidden');
+      btn.disabled = false; btn.textContent = 'Salvar todos';
     }
   });
 }
