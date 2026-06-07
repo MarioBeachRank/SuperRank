@@ -3427,6 +3427,61 @@ def admin_export():
     )
 
 
+_RESTORE_NAME_RE = re.compile(r"[a-z_]+\.json")
+
+
+@app.route("/api/admin/backup")
+@require_admin
+def admin_backup():
+    """Backup COMPLETO: todos os *.json do DATA_DIR, verbatim (inclui ligas,
+    pagamentos, PINs, settings, etc.). Restaurável 1:1 via /api/admin/restore."""
+    files = {}
+    for path in glob.glob(os.path.join(DATA_DIR, "*.json")):
+        name = os.path.basename(path)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                files[name] = json.load(f)
+        except Exception:
+            pass
+    payload = json.dumps({
+        "superrank_backup": True,
+        "version": 1,
+        "exported_at": now_iso(),
+        "files": files,
+    }, ensure_ascii=False, indent=2)
+    from flask import Response
+    return Response(
+        payload,
+        mimetype="application/json",
+        headers={"Content-Disposition": f"attachment; filename=superrank_backup_{now_iso()[:10]}.json"},
+    )
+
+
+@app.route("/api/admin/restore", methods=["POST"])
+@require_admin
+@transactional
+def admin_restore():
+    """Restaura um backup completo (de /api/admin/backup). SOBRESCREVE os dados
+    atuais. Exige {"confirm": true}. Sob @transactional: reverte se falhar."""
+    body = request.get_json(silent=True) or {}
+    if not body.get("superrank_backup") or not isinstance(body.get("files"), dict):
+        return jsonify({"error": "Arquivo de backup inválido (não é um backup do SuperRank)."}), 400
+    if body.get("confirm") is not True:
+        return jsonify({"error": "Confirmação obrigatória. Envie {\"confirm\": true}."}), 400
+
+    written, skipped = [], []
+    for name, content in body["files"].items():
+        # Só nomes simples de *.json (bloqueia path traversal) e conteúdo JSON.
+        if not _RESTORE_NAME_RE.fullmatch(name or "") or not isinstance(content, (dict, list)):
+            skipped.append(name)
+            continue
+        write_json(name, content)
+        written.append(name)
+
+    log_audit("data_restored", {"files_restored": written, "skipped": skipped})
+    return jsonify({"ok": True, "restored": written, "skipped": skipped})
+
+
 # ---------------------------------------------------------------------------
 # Sprint 15 — Log de auditoria
 # ---------------------------------------------------------------------------

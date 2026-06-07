@@ -1511,9 +1511,11 @@ async function renderAdminDashboard(content) {
         <h1 class="section-title">Dashboard</h1>
         <p class="section-subtitle">${escapeHtml(stats.active_season_name || 'SuperRank · Rei do Play')}</p>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <button id="btn-dash-refresh" class="btn btn-ghost btn-sm" title="Atualizar">↺ Atualizar</button>
-        <a href="/api/admin/export" class="btn btn-ghost btn-sm" download>Exportar dados</a>
+        <a href="/api/admin/backup" class="btn btn-ghost btn-sm" download title="Baixa um backup completo (tudo, restaurável)">⬇ Backup completo</a>
+        <button id="btn-dash-restore" class="btn btn-ghost btn-sm" style="color:#BA7517;" title="Restaurar de um arquivo de backup">⬆ Restaurar backup</button>
+        <input id="dash-restore-input" type="file" accept="application/json,.json" style="display:none;" />
       </div>
     </div>
 
@@ -1548,6 +1550,43 @@ async function renderAdminDashboard(content) {
     ${buildRankingFull(rankingData)}`;
 
   content.querySelector('#btn-dash-refresh')?.addEventListener('click', () => renderAdminDashboard(content));
+
+  // Restaurar backup (sobrescreve os dados atuais pelo arquivo escolhido)
+  const restoreInput = content.querySelector('#dash-restore-input');
+  content.querySelector('#btn-dash-restore')?.addEventListener('click', () => restoreInput?.click());
+  restoreInput?.addEventListener('change', async () => {
+    const file = restoreInput.files[0];
+    if (!file) return;
+    let backup;
+    try {
+      backup = JSON.parse(await file.text());
+    } catch (_) {
+      showToast('Arquivo inválido (não é um JSON).', 'error');
+      restoreInput.value = '';
+      return;
+    }
+    if (!backup || backup.superrank_backup !== true || typeof backup.files !== 'object') {
+      showToast('Este arquivo não é um backup completo do SuperRank (use o "Backup completo").', 'error');
+      restoreInput.value = '';
+      return;
+    }
+    const n = Object.keys(backup.files).length;
+    confirmModal(
+      'Restaurar backup',
+      `Isto vai SOBRESCREVER todos os dados atuais por este backup (${n} arquivo(s), de ${backup.exported_at || '—'}). Ação irreversível. Continuar?`,
+      async () => {
+        try {
+          const res = await api('/api/admin/restore', { method: 'POST', body: { ...backup, confirm: true } });
+          showToast(`Backup restaurado (${res.restored.length} arquivo(s)).`, 'success');
+          renderAdminDashboard(content);
+        } catch (err) {
+          showToast('Erro ao restaurar: ' + err.message, 'error');
+        }
+      },
+      'Restaurar'
+    );
+    restoreInput.value = '';
+  });
 }
 
 // ---------------------------------------------------------------------------
