@@ -1,12 +1,14 @@
 import os
 import re
 import json
+import glob
 import uuid
+import fcntl
 import hashlib
 import functools
 import urllib.parse
 from datetime import datetime
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, g
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -38,6 +40,82 @@ def write_json(filename, payload):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# Robustez de escrita: lock entre workers + transação (snapshot/rollback)
+# ---------------------------------------------------------------------------
+
+def _acquire_write_lock():
+    """Lock exclusivo (flock) num arquivo do data dir. Serializa mutações
+    entre os workers do gunicorn, evitando lost-update em read-modify-write."""
+    fd = open(os.path.join(DATA_DIR, ".write.lock"), "w")
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+@app.before_request
+def _serialize_mutations():
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        try:
+            g._write_lock_fd = _acquire_write_lock()
+        except Exception:
+            g._write_lock_fd = None
+
+
+@app.teardown_request
+def _release_mutations(exc):
+    fd = getattr(g, "_write_lock_fd", None)
+    if fd is not None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            fd.close()
+        except Exception:
+            pass
+
+
+def _snapshot_data_dir():
+    """Lê o conteúdo de todos os *.json do data dir (para rollback)."""
+    snap = {}
+    for path in glob.glob(os.path.join(DATA_DIR, "*.json")):
+        try:
+            with open(path, "rb") as f:
+                snap[path] = f.read()
+        except Exception:
+            pass
+    return snap
+
+
+def _restore_data_dir(snap):
+    # Remove *.json criados durante a transação (não existiam no snapshot).
+    for path in glob.glob(os.path.join(DATA_DIR, "*.json")):
+        if path not in snap:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    # Restaura o conteúdo original dos demais.
+    for path, content in snap.items():
+        tmp = path + ".restore.tmp"
+        with open(tmp, "wb") as f:
+            f.write(content)
+        os.replace(tmp, path)
+
+
+def transactional(fn):
+    """Snapshot do data dir antes; se a função lançar, reverte tudo e
+    repropaga. Para operações que gravam vários arquivos (fechamento,
+    exclusão em cascata) — evita estado parcial em falha no meio.
+    Roda sob o lock global de mutação (before_request)."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        snap = _snapshot_data_dir()
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            _restore_data_dir(snap)
+            raise
+    return wrapper
 
 
 def now_iso():
@@ -845,6 +923,7 @@ def _cascade_delete_season(season_id: str) -> dict:
 
 @app.route("/api/seasons/<season_id>", methods=["DELETE"])
 @require_admin
+@transactional
 def seasons_delete(season_id):
     db = read_json("seasons.json")
     season = next((s for s in db["data"] if s["id"] == season_id), None)
@@ -1880,6 +1959,7 @@ def submit_result(round_id):
 
 @app.route("/api/rounds/<round_id>/results/batch", methods=["POST"])
 @require_admin
+@transactional
 def submit_results_batch(round_id):
     """Admin lança vários resultados de uma rodada de uma vez.
 
@@ -2694,6 +2774,7 @@ def ranking_impact(season_id):
 
 @app.route("/api/seasons/<season_id>/fechamento/apply", methods=["POST"])
 @require_admin
+@transactional
 def fechamento_apply(season_id):
     """Aplica o fechamento: movimenta atletas e marca temporada como 'closed'."""
     from engines.category_engine import compute_movements, apply_movements_atomic
@@ -3428,6 +3509,7 @@ def round_close(round_id):
 
 @app.route("/api/seasons/<season_id>/rounds/close-pending", methods=["POST"])
 @require_admin
+@transactional
 def close_pending_rounds(season_id):
     """Fecha todas as rodadas pendentes (abertas) da temporada de uma vez.
 
@@ -3946,6 +4028,7 @@ def ligas_update(liga_id):
 
 @app.route("/api/ligas/<liga_id>", methods=["DELETE"])
 @require_admin
+@transactional
 def ligas_delete(liga_id):
     db = read_json("ligas.json")
     liga = next((l for l in db["data"] if l["id"] == liga_id), None)
