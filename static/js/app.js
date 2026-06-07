@@ -8946,6 +8946,63 @@ async function renderAdminAuditoria(content) {
 // Sprint 16: Configurações do Sistema
 // ---------------------------------------------------------------------------
 
+function openCriarPerfilAtletaModal(content) {
+  const body = `
+    <p style="font-size:12px;color:var(--color-text-muted);margin-bottom:12px;">Cria seu registro na lista de atletas e vincula ao seu login de admin. Depois você alterna entre os painéis pelo botão "Ver como atleta".</p>
+    <div class="form-group"><label class="field-label">Nome completo</label><input id="ap-nome" class="field-input"></div>
+    <div class="form-group"><label class="field-label">Apelido (aparece no ranking)</label><input id="ap-apelido" class="field-input"></div>
+    <div class="form-group"><label class="field-label">Telefone (WhatsApp) — opcional</label><input id="ap-tel" class="field-input" inputmode="numeric"></div>
+    <div class="form-group"><label class="field-label">PIN 4 dígitos — opcional</label><input id="ap-pin" class="field-input" maxlength="4" inputmode="numeric"></div>
+    <p id="ap-error" class="field-error hidden"></p>
+    <div id="ap-conflict"></div>`;
+  openModal('Criar meu perfil de atleta', body,
+    `<button id="ap-salvar" class="btn btn-primary">Criar</button>
+     <button id="ap-cancelar" class="btn btn-ghost">Cancelar</button>`);
+  const mb = document.getElementById('modal-body');
+  const telEl = mb.querySelector('#ap-tel'); if (telEl) applyPhoneMask(telEl);
+  document.getElementById('ap-cancelar').addEventListener('click', closeModal);
+
+  async function doLink(athleteId) {
+    try {
+      await api('/api/admin/athlete-profile', { method: 'POST', body: { link_athlete_id: athleteId } });
+      closeModal();
+      showToast('Perfil de atleta vinculado!', 'success');
+      renderAdminConfig(content);
+    } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+  }
+
+  document.getElementById('ap-salvar').addEventListener('click', async () => {
+    const errEl = mb.querySelector('#ap-error'); errEl.classList.add('hidden');
+    const conflictEl = mb.querySelector('#ap-conflict'); conflictEl.innerHTML = '';
+    const payload = {
+      nome:     mb.querySelector('#ap-nome').value.trim(),
+      apelido:  mb.querySelector('#ap-apelido').value.trim(),
+      telefone: (mb.querySelector('#ap-tel').value || '').replace(/\D/g, ''),
+      pin:      (mb.querySelector('#ap-pin').value || '').trim(),
+    };
+    const btn = document.getElementById('ap-salvar');
+    btn.disabled = true; btn.textContent = 'Criando…';
+    try {
+      await api('/api/admin/athlete-profile', { method: 'POST', body: payload });
+      closeModal();
+      showToast('Perfil de atleta criado!', 'success');
+      renderAdminConfig(content);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Criar';
+      if (err.conflict && err.athlete) {
+        conflictEl.innerHTML = `
+          <div class="alert alert-warning" style="margin-top:8px;">
+            Já existe um atleta <strong>${escapeHtml(err.athlete.apelido || err.athlete.nome)}</strong> com esse nome/telefone.
+            <button id="ap-vincular" class="btn btn-primary btn-sm" style="margin-top:8px;display:block;">É você — vincular a esse atleta</button>
+          </div>`;
+        document.getElementById('ap-vincular').addEventListener('click', () => doLink(err.athlete.id));
+      } else {
+        errEl.textContent = err.message; errEl.classList.remove('hidden');
+      }
+    }
+  });
+}
+
 async function renderAdminConfig(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando configurações…</p>`;
   let settings = {};
@@ -8953,6 +9010,9 @@ async function renderAdminConfig(content) {
     content.innerHTML = `<div class="alert alert-error">Erro: ${escapeHtml(err.message)}</div>`;
     return;
   }
+  let adminMe = {};
+  try { adminMe = await api('/api/auth/admin/me'); } catch (_) {}
+  const linkedAth = adminMe.athlete || null;
 
   function field(id, label, value, hint, type = 'text', inputmode = '') {
     return `
@@ -9010,6 +9070,17 @@ async function renderAdminConfig(content) {
         <button id="btn-save-config" class="btn btn-primary">Salvar configurações</button>
         <span id="cfg-feedback" style="font-size:13px;"></span>
       </div>
+    </div>
+
+    <div class="card" style="max-width:600px;margin-top:16px;">
+      <p class="config-section-label">🎾 Meu perfil de atleta</p>
+      ${linkedAth ? `
+        <p style="font-size:13px;margin:0 0 12px;">Você também joga: vinculado ao atleta <strong>${escapeHtml(linkedAth.apelido || linkedAth.nome)}</strong>.</p>
+        <button id="btn-ver-como-atleta" class="btn btn-ghost btn-sm" style="color:var(--color-primary);">→ Ver como atleta</button>
+      ` : `
+        <p style="font-size:13px;color:var(--color-text-muted);margin:0 0 12px;">Você organiza e também joga? Crie seu perfil de atleta para alternar entre os dois painéis com um toque, sem precisar de outro login.</p>
+        <button id="btn-criar-perfil-atleta" class="btn btn-primary btn-sm">Criar meu perfil de atleta</button>
+      `}
     </div>`;
 
   const phoneLocalEl = content.querySelector('[name="phone_local"]');
@@ -9041,6 +9112,10 @@ async function renderAdminConfig(content) {
     }
     btn.disabled = false; btn.textContent = 'Salvar configurações';
   });
+
+  // Meu perfil de atleta
+  content.querySelector('#btn-ver-como-atleta')?.addEventListener('click', () => { location.hash = '#mesa/home'; });
+  content.querySelector('#btn-criar-perfil-atleta')?.addEventListener('click', () => openCriarPerfilAtletaModal(content));
 
   // Animar toggle de cobranças visualmente
   content.querySelector('#cfg-payments-enabled')?.addEventListener('change', e => {
