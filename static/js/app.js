@@ -814,7 +814,7 @@ function renderCadastro() {
         method: 'POST',
         body: { nome, apelido, pin, type: 'reserva', desired_category: desired, telefone },
       });
-      successEl.textContent = 'Solicitação enviada! O admin confirmará sua categoria em breve.';
+      successEl.textContent = 'Cadastro feito! Você já pode entrar com seu telefone e PIN. O admin confirmará sua categoria antes da próxima temporada.';
       successEl.classList.remove('hidden');
       e.target.reset();
     } catch (err) {
@@ -4468,8 +4468,8 @@ function renderMesaSlots(content, ctx) {
           Rodada ${round.round_number}${round.start_date ? ' · ' + round.start_date + ' → ' + round.end_date : ''}
         </p>
         ${round.deadline_slots ? `
-          <div class="deadline-bar" style="margin-bottom:10px;">
-            ⏰ Prazo: <strong>${fmtDeadline(round.deadline_slots)}</strong> · Art. 26: sem slot = WO automático
+          <div class="deadline-bar" style="margin-bottom:10px;color:${deadlineUrgencyColor(round.deadline_slots)};border-color:${deadlineUrgencyColor(round.deadline_slots)};">
+            ⏰ <strong>${deadlineUrgencyText(round.deadline_slots)}</strong> · sem marcar = WO automático
           </div>` : ''}
         <p class="slots-summary">${total} slot${total!==1?'s':''} selecionado${total!==1?'s':''}</p>
         ${buildCalStrip()}

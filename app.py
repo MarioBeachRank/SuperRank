@@ -234,38 +234,41 @@ def auth_atleta():
 
     db = read_json("athletes.json")
     ph = hash_pin(pin)
-    atleta = next(
+    # Procura por telefone (qualquer status) para dar erro específico.
+    by_phone = next(
         (a for a in db["data"]
-         if re.sub(r'\D', '', str(a.get("telefone") or "")) == telefone
-         and a["pin_hash"] == ph
-         and a["status"] == "ativo"),
+         if re.sub(r'\D', '', str(a.get("telefone") or "")) == telefone),
         None,
     )
-    if not atleta:
-        # Fallback: check if this is a registered guest
-        gr_db = read_json("guest_requests.json")
-        for gr in gr_db["data"]:
-            cg = gr.get("confirmed_guest") or {}
-            if (cg.get("telefone") == telefone
-                    and cg.get("pin_hash") == ph
-                    and cg.get("registered")):
-                session["atleta_id"] = cg["guest_id"]
-                session["is_guest"]  = True
-                session["is_admin"]  = False
-                return jsonify({"ok": True, "atleta": {
-                    "id":     cg["guest_id"],
-                    "nome":   cg["nome_display"],
-                    "apelido": cg["nome_display"],
-                }})
-        return jsonify({"error": "Telefone ou PIN inválidos"}), 401
+    if by_phone:
+        if by_phone.get("status") != "ativo":
+            return jsonify({"error": "Esta conta está inativa. Fale com o admin."}), 403
+        if by_phone["pin_hash"] != ph:
+            return jsonify({"error": "PIN incorreto."}), 401
+        session["atleta_id"] = by_phone["id"]
+        session["atleta_nome"] = by_phone["nome"]
+        return jsonify({"ok": True, "atleta": {
+            "id": by_phone["id"],
+            "nome": by_phone["nome"],
+            "apelido": by_phone.get("apelido") or by_phone["nome"],
+        }})
 
-    session["atleta_id"] = atleta["id"]
-    session["atleta_nome"] = atleta["nome"]
-    return jsonify({"ok": True, "atleta": {
-        "id": atleta["id"],
-        "nome": atleta["nome"],
-        "apelido": atleta.get("apelido") or atleta["nome"],
-    }})
+    # Sem atleta com esse telefone: tenta convidado registrado.
+    gr_db = read_json("guest_requests.json")
+    for gr in gr_db["data"]:
+        cg = gr.get("confirmed_guest") or {}
+        if (cg.get("telefone") == telefone
+                and cg.get("pin_hash") == ph
+                and cg.get("registered")):
+            session["atleta_id"] = cg["guest_id"]
+            session["is_guest"]  = True
+            session["is_admin"]  = False
+            return jsonify({"ok": True, "atleta": {
+                "id":     cg["guest_id"],
+                "nome":   cg["nome_display"],
+                "apelido": cg["nome_display"],
+            }})
+    return jsonify({"error": "Telefone não cadastrado."}), 401
 
 
 @app.route("/api/auth/logout", methods=["POST"])
