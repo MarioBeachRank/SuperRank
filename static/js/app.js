@@ -3893,16 +3893,12 @@ async function renderMesaHome(content, ctx) {
     <div style="padding:var(--space-md);">
       ${heroHtml}
 
-      ${buildMiniRanking()}
-
-      ${lastResultHtml}
-
       ${round ? `
         <div class="card" style="margin-bottom:16px;">
           <p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--color-text-muted);margin-bottom:4px;">Rodada Atual</p>
           <p style="font-size:20px;font-weight:700;color:var(--color-primary);">Rodada ${round.round_number} de ${round.rounds_total}</p>
           ${round.target_date ? `<p style="font-size:13px;color:var(--color-text-muted);">Data: ${round.target_date}</p>` : ''}
-          ${round.deadline_slots ? `<p style="font-size:12px;color:${deadlineUrgencyColor(round.deadline_slots)};">${deadlineUrgencyText(round.deadline_slots)}</p>` : ''}
+          ${round.deadline_slots ? `<p style="font-size:13px;font-weight:700;color:${deadlineUrgencyColor(round.deadline_slots)};">⏰ ${deadlineUrgencyText(round.deadline_slots)}</p>` : ''}
           ${ctx.round_progress ? (() => {
             const { confirmed, total } = ctx.round_progress;
             const pct = Math.round(100 * confirmed / (total || 1));
@@ -3917,8 +3913,6 @@ async function renderMesaHome(content, ctx) {
             </div>`;
           })() : ''}
         </div>` : `<p class="placeholder-text">Nenhuma rodada criada ainda.</p>`}
-
-      <div id="mesa-schedule-block" style="margin-bottom:16px;"></div>
 
       ${pendencias.length ? `
         <div style="margin-bottom:16px;">
@@ -3968,6 +3962,12 @@ async function renderMesaHome(content, ctx) {
           ${myRank ? `<p style="font-size:11px;color:var(--color-text-muted);">${notPlayed ? 'sem jogos ainda' : myRank.rank + '° lugar'}</p>` : ''}
         </a>
       </div>
+
+      ${buildMiniRanking()}
+
+      ${lastResultHtml}
+
+      <div id="mesa-schedule-block" style="margin-bottom:16px;"></div>
     </div>`;
 
   // Load round schedule asynchronously
