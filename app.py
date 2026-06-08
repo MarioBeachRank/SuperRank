@@ -5125,7 +5125,28 @@ def wa_log_list():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "app": "SuperRank Rei do Play", "version": "1.0.0"})
+    out = {
+        "status": "ok",
+        "app": "SuperRank Rei do Play",
+        "version": "1.0.0",
+        "build_id": _BUILD_ID,
+        "data_dir": DATA_DIR,
+        "volume_mount": os.getenv("RAILWAY_VOLUME_MOUNT_PATH"),
+        "session": {
+            "is_admin":      bool(session.get("is_admin")),
+            "admin_id":      session.get("admin_id"),
+            "admin_role":    session.get("admin_role"),
+            "has_atleta_id": bool(session.get("atleta_id")),
+        },
+    }
+    # Detalhe dos admins (só para admin logado) — diagnóstico do vínculo.
+    if session.get("is_admin"):
+        out["admins"] = [
+            {"id": a.get("id"), "username": a.get("username"),
+             "role": a.get("role"), "athlete_id": a.get("athlete_id")}
+            for a in read_json("admins.json")["data"]
+        ]
+    return jsonify(out)
 
 
 def _migrate_groups_sets():
