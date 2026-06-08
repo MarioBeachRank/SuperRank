@@ -512,6 +512,26 @@ def admin_me():
     })
 
 
+@app.route("/api/admin/athlete-profile", methods=["DELETE"])
+@require_admin
+def admin_unlink_athlete_profile():
+    """Remove o vínculo admin↔atleta. NÃO apaga o atleta — ele continua na
+    lista; só deixa de aparecer no login de admin."""
+    admin_id = session.get("admin_id")
+    admins_db = read_json("admins.json")
+    admin = next((a for a in admins_db["data"] if a["id"] == admin_id), None)
+    if not admin and session.get("admin_role") == "super":
+        admin = next((a for a in admins_db["data"] if a.get("role") == "super"), None)
+    if not admin:
+        return jsonify({"error": "Admin não encontrado. Faça login novamente."}), 404
+    admin.pop("athlete_id", None)
+    write_json("admins.json", admins_db)
+    session.pop("atleta_id", None)
+    session.pop("atleta_nome", None)
+    log_audit("admin_athlete_unlinked", {"admin_id": admin.get("id")})
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/athlete-profile", methods=["POST"])
 @require_admin
 @transactional

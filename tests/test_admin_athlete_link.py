@@ -121,6 +121,23 @@ def test_me_reconcilia_super_com_admin_id_defasado(env):
     assert me["atleta"] and me["atleta"]["id"] == "a1"  # caiu no super-admin
 
 
+def test_desvincular_remove_link_mas_mantem_atleta(env):
+    c, tmp, app = env
+    _athlete(tmp)
+    _login_admin(c)
+    c.post("/api/admin/athlete-profile", json={"link_athlete_id": "a1"})
+    assert c.get("/api/auth/me").get_json()["atleta"]["id"] == "a1"
+    # desvincula
+    resp = c.delete("/api/admin/athlete-profile")
+    assert resp.status_code == 200
+    # admin sem athlete_id e sessão sem atleta
+    admins = json.loads((tmp / "admins.json").read_text())["data"]
+    assert all(not a.get("athlete_id") for a in admins)
+    assert c.get("/api/auth/me").get_json()["atleta"] is None
+    # atleta CONTINUA na lista (não foi apagado)
+    assert len(json.loads((tmp / "athletes.json").read_text())["data"]) == 1
+
+
 def test_endpoint_exige_admin(env):
     c, tmp, app = env
     assert c.post("/api/admin/athlete-profile", json={"nome": "X", "apelido": "X"}).status_code in (401, 403)

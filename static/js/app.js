@@ -9003,6 +9003,51 @@ function openCriarPerfilAtletaModal(content) {
   });
 }
 
+async function openVincularAtletaModal(content) {
+  let athletes = [];
+  try { athletes = await api('/api/athletes'); } catch (_) {}
+  const ativos = athletes.filter(a => a.status === 'ativo');
+
+  const itemHtml = list => list.length ? list.map(a => `
+    <button class="va-item btn btn-ghost" data-id="${a.id}"
+      style="display:flex;width:100%;justify-content:space-between;align-items:center;text-align:left;margin-bottom:6px;">
+      <span>${escapeHtml(a.nome)}</span>
+      <span style="font-size:11px;color:var(--color-text-muted);">${a.apelido ? '@' + escapeHtml(a.apelido) : ''}</span>
+    </button>`).join('') : '<p class="placeholder-text" style="padding:16px;">Nenhum atleta encontrado.</p>';
+
+  openModal('Vincular a um atleta existente',
+    `<p style="font-size:12px;color:var(--color-text-muted);margin-bottom:10px;">Toque no atleta que é você. Ele será vinculado ao seu login de admin.</p>
+     <input id="va-search" class="field-input" placeholder="Buscar atleta…" style="margin-bottom:10px;">
+     <div id="va-list" style="max-height:50vh;overflow:auto;">${itemHtml(ativos)}</div>
+     <p id="va-error" class="field-error hidden"></p>`,
+    `<button id="va-cancelar" class="btn btn-ghost">Cancelar</button>`);
+
+  const mb = document.getElementById('modal-body');
+  document.getElementById('va-cancelar').addEventListener('click', closeModal);
+
+  function wireItems() {
+    mb.querySelectorAll('.va-item').forEach(btn => btn.addEventListener('click', async () => {
+      try {
+        await api('/api/admin/athlete-profile', { method: 'POST', body: { link_athlete_id: btn.dataset.id } });
+        closeModal();
+        showToast('Perfil de atleta vinculado!', 'success');
+        renderAdminConfig(content);
+      } catch (e) {
+        const er = mb.querySelector('#va-error');
+        er.textContent = e.message; er.classList.remove('hidden');
+      }
+    }));
+  }
+  mb.querySelector('#va-search').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    mb.querySelector('#va-list').innerHTML = itemHtml(
+      ativos.filter(a => (a.nome || '').toLowerCase().includes(q) || (a.apelido || '').toLowerCase().includes(q))
+    );
+    wireItems();
+  });
+  wireItems();
+}
+
 async function renderAdminConfig(content) {
   content.innerHTML = `<p class="placeholder-text">Carregando configurações…</p>`;
   let settings = {};
@@ -9076,10 +9121,16 @@ async function renderAdminConfig(content) {
       <p class="config-section-label">🎾 Meu perfil de atleta</p>
       ${linkedAth ? `
         <p style="font-size:13px;margin:0 0 12px;">Você também joga: vinculado ao atleta <strong>${escapeHtml(linkedAth.apelido || linkedAth.nome)}</strong>.</p>
-        <button id="btn-ver-como-atleta" class="btn btn-ghost btn-sm" style="color:var(--color-primary);">→ Ver como atleta</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="btn-ver-como-atleta" class="btn btn-ghost btn-sm" style="color:var(--color-primary);">→ Ver como atleta</button>
+          <button id="btn-desvincular-atleta" class="btn btn-ghost btn-sm" style="color:#D94040;">Desvincular</button>
+        </div>
       ` : `
-        <p style="font-size:13px;color:var(--color-text-muted);margin:0 0 12px;">Você organiza e também joga? Crie seu perfil de atleta para alternar entre os dois painéis com um toque, sem precisar de outro login.</p>
-        <button id="btn-criar-perfil-atleta" class="btn btn-primary btn-sm">Criar meu perfil de atleta</button>
+        <p style="font-size:13px;color:var(--color-text-muted);margin:0 0 12px;">Você organiza e também joga? Vincule seu perfil de atleta para alternar entre os dois painéis com um toque, sem precisar de outro login.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="btn-vincular-existente" class="btn btn-primary btn-sm">Vincular a um atleta existente</button>
+          <button id="btn-criar-perfil-atleta" class="btn btn-ghost btn-sm">Criar novo</button>
+        </div>
       `}
     </div>`;
 
@@ -9116,6 +9167,21 @@ async function renderAdminConfig(content) {
   // Meu perfil de atleta
   content.querySelector('#btn-ver-como-atleta')?.addEventListener('click', () => { location.hash = '#mesa/home'; });
   content.querySelector('#btn-criar-perfil-atleta')?.addEventListener('click', () => openCriarPerfilAtletaModal(content));
+  content.querySelector('#btn-vincular-existente')?.addEventListener('click', () => openVincularAtletaModal(content));
+  content.querySelector('#btn-desvincular-atleta')?.addEventListener('click', () => {
+    confirmModal(
+      'Desvincular perfil de atleta',
+      'Isto remove o vínculo entre sua conta de admin e seu atleta. Seu perfil de atleta CONTINUA na lista (não é apagado) — só deixa de aparecer no seu login de admin.',
+      async () => {
+        try {
+          await api('/api/admin/athlete-profile', { method: 'DELETE' });
+          showToast('Perfil de atleta desvinculado.', 'success');
+          renderAdminConfig(content);
+        } catch (e) { showToast('Erro: ' + e.message, 'error'); }
+      },
+      'Desvincular'
+    );
+  });
 
   // Animar toggle de cobranças visualmente
   content.querySelector('#cfg-payments-enabled')?.addEventListener('change', e => {
