@@ -377,11 +377,12 @@ def auth_me():
     # Reconcilia: admin com atleta vinculado (admin.athlete_id) mas cuja sessão
     # ainda não tem atleta_id — vínculo criado após o login, ou login antigo
     # (outro device). Assim o "Ver como atleta" aparece sem precisar relogar.
-    if session.get("is_admin") and not session.get("atleta_id") and session.get("admin_id"):
-        admin = next(
-            (a for a in read_json("admins.json")["data"] if a["id"] == session["admin_id"]),
-            None,
-        )
+    if session.get("is_admin") and not session.get("atleta_id"):
+        admins = read_json("admins.json")["data"]
+        admin = next((a for a in admins if a["id"] == session.get("admin_id")), None)
+        # Sessão antiga/legada cujo admin_id não resolve: cai no super-admin.
+        if not admin and session.get("admin_role") == "super":
+            admin = next((a for a in admins if a.get("role") == "super"), None)
         _attach_linked_athlete(admin)
     return jsonify({
         "is_admin": session.get("is_admin", False),

@@ -105,6 +105,22 @@ def test_me_reconcilia_vinculo_apos_login(env):
     assert me["atleta"] and me["atleta"]["id"] == "a1"
 
 
+def test_me_reconcilia_super_com_admin_id_defasado(env):
+    c, tmp, app = env
+    _athlete(tmp)  # a1
+    (tmp / "admins.json").write_text(json.dumps({"version": 1, "data": [
+        {"id": "adm1", "username": "admin", "password_hash": app.hash_pin("x"),
+         "role": "super", "athlete_id": "a1"}
+    ]}), encoding="utf-8")
+    # Simula sessão antiga/legada: is_admin super, mas admin_id que não resolve.
+    with c.session_transaction() as sess:
+        sess["is_admin"] = True
+        sess["admin_role"] = "super"
+        sess["admin_id"] = "id-defasado-que-nao-existe"
+    me = c.get("/api/auth/me").get_json()
+    assert me["atleta"] and me["atleta"]["id"] == "a1"  # caiu no super-admin
+
+
 def test_endpoint_exige_admin(env):
     c, tmp, app = env
     assert c.post("/api/admin/athlete-profile", json={"nome": "X", "apelido": "X"}).status_code in (401, 403)
