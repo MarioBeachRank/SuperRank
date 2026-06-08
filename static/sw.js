@@ -1,22 +1,15 @@
-/* SuperRank — Service Worker (Sprint 13) */
+/* SuperRank — Service Worker */
 
-const CACHE_NAME = 'superrank-v1';
-const STATIC_ASSETS = [
-  '/',
-  '/static/css/style.css',
-  '/static/js/app.js',
-  '/static/offline.html',
-];
+// Bump do CACHE_NAME faz o 'activate' limpar caches antigos (ex.: o v1
+// cache-first que servia app.js/index.html velhos no celular).
+const CACHE_NAME = 'superrank-v2';
+const OFFLINE_URL = '/static/offline.html';
 
-// Instala e pré-cacheia os assets estáticos
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS))
-  );
+  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.add(OFFLINE_URL)));
   self.skipWaiting();
 });
 
-// Remove caches antigos ao ativar nova versão
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -26,11 +19,12 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// Estratégia: Network-first para API, Cache-first para estáticos
+// Estratégia: API sempre network; HTML/JS/CSS e navegação NETWORK-FIRST
+// (sempre a versão nova quando online), cache só como fallback offline.
+// Antes era cache-first, o que servia uma versão antiga indefinidamente.
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Requisições de API: sempre network; em caso de falha, não retorna cache
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(event.request).catch(() =>
@@ -43,25 +37,19 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Assets estáticos e navegação: cache-first, fallback para network, depois offline
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then(response => {
-          // Armazena respostas GET bem-sucedidas no cache
-          if (event.request.method === 'GET' && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then(c => c.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => {
-          // Fallback para offline.html em navegação
-          if (event.request.mode === 'navigate') {
-            return caches.match('/static/offline.html');
-          }
-        });
-    })
+    fetch(event.request)
+      .then(response => {
+        if (event.request.method === 'GET' && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then(c => c.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() =>
+        caches.match(event.request).then(cached =>
+          cached || (event.request.mode === 'navigate' ? caches.match(OFFLINE_URL) : undefined)
+        )
+      )
   );
 });
