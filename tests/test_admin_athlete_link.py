@@ -87,6 +87,24 @@ def test_nao_vincula_duas_vezes(env):
     assert again.status_code == 409
 
 
+def test_me_reconcilia_vinculo_apos_login(env):
+    c, tmp, app = env
+    _athlete(tmp)  # a1 existe
+    (tmp / "admins.json").write_text(json.dumps({"version": 1, "data": [
+        {"id": "adm1", "username": "admin", "password_hash": app.hash_pin("x"), "role": "super"}
+    ]}), encoding="utf-8")
+    _login_admin(c)
+    # logo após login (admin sem athlete_id), sessão não tem atleta
+    assert c.get("/api/auth/me").get_json()["atleta"] is None
+    # vínculo criado DEPOIS (ex.: outro device / após o login)
+    admins = json.loads((tmp / "admins.json").read_text())
+    admins["data"][0]["athlete_id"] = "a1"
+    (tmp / "admins.json").write_text(json.dumps(admins), encoding="utf-8")
+    # /api/auth/me reconcilia → atleta aparece sem relogar
+    me = c.get("/api/auth/me").get_json()
+    assert me["atleta"] and me["atleta"]["id"] == "a1"
+
+
 def test_endpoint_exige_admin(env):
     c, tmp, app = env
     assert c.post("/api/admin/athlete-profile", json={"nome": "X", "apelido": "X"}).status_code in (401, 403)

@@ -374,6 +374,15 @@ def auth_logout():
 
 @app.route("/api/auth/me")
 def auth_me():
+    # Reconcilia: admin com atleta vinculado (admin.athlete_id) mas cuja sessão
+    # ainda não tem atleta_id — vínculo criado após o login, ou login antigo
+    # (outro device). Assim o "Ver como atleta" aparece sem precisar relogar.
+    if session.get("is_admin") and not session.get("atleta_id") and session.get("admin_id"):
+        admin = next(
+            (a for a in read_json("admins.json")["data"] if a["id"] == session["admin_id"]),
+            None,
+        )
+        _attach_linked_athlete(admin)
     return jsonify({
         "is_admin": session.get("is_admin", False),
         "atleta": {
